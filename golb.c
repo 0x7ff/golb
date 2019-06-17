@@ -9,6 +9,7 @@
 #define PROC_P_PID_OFF (0x60)
 #define VM_MAP_PMAP_OFF (0x48)
 #define IO_BASE (0x200000000ULL)
+#define VM_MAP_FLAGS_OFF (0x10C)
 #define USER_CLIENT_TRAP_OFF (0x40)
 #define IPC_PORT_IP_KOBJECT_OFF (0x68)
 #define TASK_ITK_REGISTERED_OFF (0x2E8)
@@ -36,6 +37,7 @@
 #define IS_RET(a) ((a) == 0xD65F03C0U)
 #define ADRP_ADDR(a) ((a) & ~0xFFFULL)
 #define PVH_LIST_MASK (~PVH_TYPE_MASK)
+#define VM_MAP_FLAGS_NO_ZERO_FILL (4U)
 #define ARM_PGMASK (ARM_PGBYTES - 1ULL)
 #define ADRP_IMM(a) (ADR_IMM(a) << 12U)
 #define ARM_PGBYTES (1U << arm_pgshift)
@@ -45,6 +47,7 @@
 #define ADD_X_IMM(a) extract32(a, 10, 12)
 #define TRUNC_PAGE(a) ((a) & ~ARM_PGMASK)
 #define IS_DSB_ISH(a) ((a) == 0xD5033B9FU)
+#define FAULT_MAGIC (0x4455445564666477ULL)
 #define PVH_FLAG_LOCK (1ULL << PVH_LOCK_BIT)
 #define BL_IMM(a) (sextract64(a, 0, 26) << 2U)
 #define LDR_X_IMM(a) (sextract64(a, 5, 19) << 2U)
@@ -273,12 +276,14 @@ static key_seed_t uid_key_seeds[] = {
 	{ 0x839, { 0xC55BB624, 0xDCDCDD8F, 0x6C8B5498, 0x4D84E73E }, { 0 } },
 	{ 0x83A, { 0xDBAB10CB, 0x63ECC98A, 0xB4C228DB, 0x060ED6A9 }, { 0 } },
 	{ 0x83B, { 0x87D0A77D, 0x171EFE90, 0xB83E2DC6, 0x2D94D81F }, { 0 } },
+	{ 0x83C, { 0xD34AC2B2, 0xD84BF05D, 0x547433A0, 0x644EE6C4 }, { 0 } },
 	{ 0x899, { 0xB5FCE8D1, 0x8DBF3739, 0xD14CC7EF, 0xB0D4F1D0 }, { 0 } },
 	{ 0x89B, { 0x67993E18, 0x543CB06B, 0xF568A46F, 0x49BD0C1C }, { 0 } },
 	{ 0x89C, { 0x7140B400, 0xCFF3A1A8, 0xFF9B2FD9, 0xFCDD75FB }, { 0 } },
 	{ 0x89D, { 0xD8C29F34, 0x2C8AFBA6, 0xB47C0329, 0xAD23DAAC }, { 0 } },
 	{ 0x8A0, { 0xC599B4D1, 0xDC3CA139, 0xD19BA498, 0xB0DD0C3E }, { 0 } },
-	{ 0x8A3, { 0x65418256, 0xCDE05165, 0x4CF86FF5, 0xEF791AC1 }, { 0 } }
+	{ 0x8A3, { 0x65418256, 0xCDE05165, 0x4CF86FF5, 0xEF791AC1 }, { 0 } },
+	{ 0x8A4, { 0xDFF7310C, 0x034D9281, 0xFA37B48C, 0xC9F76003 }, { 0 } }
 };
 
 static uint32_t
@@ -777,6 +782,7 @@ kcall(kern_return_t *ret, kaddr_t func, size_t argc, ...) {
 static kern_return_t
 phys_init(void) {
 	kaddr_t our_task, our_map;
+	uint32_t flags;
 
 	if(kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS) {
 		printf("pv_head_table: " KADDR_FMT "\n", pv_head_table);
@@ -788,9 +794,15 @@ phys_init(void) {
 				printf("our_task: " KADDR_FMT "\n", our_task);
 				if(kread_addr(our_task + TASK_MAP_OFF, &our_map) == KERN_SUCCESS) {
 					printf("our_map: " KADDR_FMT "\n", our_map);
-					if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
-						printf("our_pmap: " KADDR_FMT "\n", our_pmap);
-						return KERN_SUCCESS;
+					if(kread_buf(our_map + VM_MAP_FLAGS_OFF, &flags, sizeof(flags)) == KERN_SUCCESS) {
+						printf("flags: 0x%08" PRIx32 "\n", flags);
+						flags |= VM_MAP_FLAGS_NO_ZERO_FILL;
+						if(kwrite_buf(our_map + VM_MAP_FLAGS_OFF, &flags, sizeof(flags)) == KERN_SUCCESS) {
+							if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
+								printf("our_pmap: " KADDR_FMT "\n", our_pmap);
+								return KERN_SUCCESS;
+							}
+						}
 					}
 				}
 			}
@@ -828,7 +840,7 @@ phys_map(phys_ctx_t *ctx, kaddr_t virt, kaddr_t phys, mach_vm_size_t sz, vm_prot
 		return KERN_FAILURE;
 	}
 	while(sz) {
-		memset((void *)virt, '\0', ARM_PGBYTES);
+		__asm__ __volatile__("stnp %0, %0, [%1]" :: "r"(FAULT_MAGIC), "r"(virt));
 		if(kcall(&ret, pmap_find_phys, 2, our_pmap, virt) != KERN_SUCCESS || ret <= 0) {
 			break;
 		}
@@ -971,10 +983,10 @@ aes_ap_v1_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opt
 }
 
 static void
-push_commands(const uint32_t *cmd, uint32_t size) {
-	uint32_t i;
+push_commands(const uint32_t *cmd, size_t len) {
+	size_t i;
 
-	for(i = 0; i < size / sizeof(*cmd); ++i) {
+	for(i = 0; i < len / sizeof(*cmd); ++i) {
 		rAES_COMMAND_FIFO = cmd[i];
 	}
 }
