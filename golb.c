@@ -332,6 +332,7 @@ init_arm_globals(void) {
 			case CPUFAMILY_ARM_MONSOON_MISTRAL:
 				aes_ap_v2 = true;
 				pmgr_base_off = 0x32000000;
+				pmgr_aes0_ps_off = 0x80240;
 				aes_ap_base_off = 0x2E008000;
 				arm_pgshift = ARM_PGSHIFT_16K;
 				return KERN_SUCCESS;
@@ -1048,10 +1049,8 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 		default:
 			return KERN_FAILURE;
 	}
-	if(pmgr_aes0_ps_off) {
-		rPMGR_AES0_PS |= PMGR_PS_RUN_MAX;
-		while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
-	}
+	rPMGR_AES0_PS |= PMGR_PS_RUN_MAX;
+	while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
 	rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_COMMAND_UMASK;
 	rAES_CONTROL = AES_BLK_CONTROL_START_UMASK;
 	push_commands(&ckey.command, sizeof(ckey.command));
@@ -1069,7 +1068,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 	while(!(rAES_INT_STATUS & AES_BLK_INT_STATUS_FLAG_COMMAND_UMASK)) {}
 	rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_COMMAND_UMASK;
 	rAES_CONTROL = AES_BLK_CONTROL_STOP_UMASK;
-	if(pmgr_aes0_ps_off) {
+	if(pmgr_aes0_ps_off != 0x80240) {
 		rPMGR_AES0_PS &= ~PMGR_PS_RUN_MAX;
 		while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
 	}
