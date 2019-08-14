@@ -116,10 +116,10 @@
 #define KEY_IN_CTRL_SEL_GID1 (3U << 4U)
 #define AES_BLK_CONTROL_STOP_UMASK (2U)
 #define AES_BLK_CONTROL_START_UMASK (1U)
-#define COMMAND_FLAG_STOP_COMMANDS_SHIFT (27U)
+#define COMMAND_FLAG_STOP_COMMANDS_SHIFT (26U)
 #define COMMAND_DATA_COMMAND_LENGTH_SHIFT (0U)
 #define COMMAND_KEY_COMMAND_ENCRYPT_SHIFT (20U)
-#define COMMAND_FLAG_SEND_INTERRUPT_SHIFT (26U)
+#define COMMAND_FLAG_SEND_INTERRUPT_SHIFT (27U)
 #define COMMAND_DATA_UPPER_ADDR_DEST_SHIFT (0U)
 #define PMGR_BASE_ADDR (IO_BASE + pmgr_base_off)
 #define COMMAND_DATA_UPPER_ADDR_DEST_MASK (0xFFU)
@@ -131,6 +131,7 @@
 #define AES_BLK_INT_STATUS_FLAG_COMMAND_UMASK (32U)
 #define AES_AP_BASE_ADDR (IO_BASE + aes_ap_base_off)
 #define COMMAND_DATA_COMMAND_LENGTH_MASK (0xFFFFFFU)
+#define rAES_STATUS (*(volatile uint32_t *)(aes_ap_virt_base + 0xC))
 #define rAES_CONTROL (*(volatile uint32_t *)(aes_ap_virt_base + 0x8))
 #define rAES_AP_IV_IN0 (*(volatile uint32_t *)(aes_ap_virt_base + 0x100))
 #define rAES_AP_IV_IN1 (*(volatile uint32_t *)(aes_ap_virt_base + 0x104))
@@ -152,6 +153,7 @@
 #define rAES_AP_KEY_IN_CTRL (*(volatile uint32_t *)(aes_ap_virt_base + 0x90))
 #define rAES_AP_TXT_OUT_STS (*(volatile uint32_t *)(aes_ap_virt_base + 0x50))
 #define rPMGR_AES0_PS (*(volatile uint32_t *)(pmgr_virt_base + pmgr_aes0_ps_off))
+#define rAES_COMMAND_FIFO_STATUS (*(volatile uint32_t *)(aes_ap_virt_base + 0x24))
 
 #ifndef SEG_TEXT_EXEC
 #	define SEG_TEXT_EXEC "__TEXT_EXEC"
@@ -1051,6 +1053,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 	}
 	rPMGR_AES0_PS |= PMGR_PS_RUN_MAX;
 	while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
+	printf("AES_STATUS: 0x%" PRIx32 "\n", rAES_STATUS);
 	rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_COMMAND_UMASK;
 	rAES_CONTROL = AES_BLK_CONTROL_START_UMASK;
 	push_commands(&ckey.command, sizeof(ckey.command));
@@ -1067,6 +1070,9 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 	push_commands(&flag, sizeof(flag));
 	while(!(rAES_INT_STATUS & AES_BLK_INT_STATUS_FLAG_COMMAND_UMASK)) {}
 	rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_COMMAND_UMASK;
+	if(rAES_INT_STATUS) {
+		printf("AES_STATUS: 0x%" PRIx32 ", AES_COMMAND_FIFO_STATUS: 0x%" PRIx32 ", AES_INT_STATUS: 0x%" PRIx32 "\n", rAES_STATUS, rAES_COMMAND_FIFO_STATUS, rAES_INT_STATUS);
+	}
 	rAES_CONTROL = AES_BLK_CONTROL_STOP_UMASK;
 	if(pmgr_aes0_ps_off != 0x80240) {
 		rPMGR_AES0_PS &= ~PMGR_PS_RUN_MAX;
