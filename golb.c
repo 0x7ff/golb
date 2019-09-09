@@ -14,6 +14,7 @@
 #define IPC_PORT_IP_KOBJECT_OFF (0x68)
 #define TASK_ITK_REGISTERED_OFF (0x2E8)
 #define VTAB_GET_EXTERNAL_TRAP_FOR_INDEX_OFF (0x5B8)
+#define VM_KERNEL_LINK_ADDRESS (0xFFFFFFF007004000ULL)
 
 #define AP_RWRW (1U)
 #define AP_RORO (3U)
@@ -64,6 +65,7 @@
 #define IS_CBZ_W(a) (((a) & 0xFF000000U) == 0x34000000U)
 #define IS_ADD_X(a) (((a) & 0xFFC00000U) == 0x91000000U)
 #define IS_LDR_X(a) (((a) & 0xFF000000U) == 0x58000000U)
+#define IS_MOV_X(a) (((a) & 0xFFE00000U) == 0xAA000000U)
 #define LDR_X_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 3U)
 #define ARM_PTE_MASK TRUNC_PAGE((1ULL << ARM64_VMADDR_BITS) - 1)
 #define IS_LDR_X_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xF9400000U)
@@ -388,7 +390,7 @@ get_kbase(kaddr_t *kslide) {
 
 	if(task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
 		*kslide = dyld_info.all_image_info_size;
-		return dyld_info.all_image_info_addr;
+		return VM_KERNEL_LINK_ADDRESS + *kslide;
 	}
 	return 0;
 }
@@ -424,8 +426,8 @@ kread_buf_alloc(kaddr_t addr, mach_vm_size_t read_sz) {
 }
 
 static kern_return_t
-kread_addr(kaddr_t addr, kaddr_t *val) {
-	return kread_buf(addr, val, sizeof(*val));
+kread_addr(kaddr_t addr, kaddr_t *value) {
+	return kread_buf(addr, value, sizeof(*value));
 }
 
 static kern_return_t
@@ -447,8 +449,8 @@ kwrite_buf(kaddr_t addr, const void *buf, mach_msg_type_number_t sz) {
 }
 
 static kern_return_t
-kwrite_addr(kaddr_t addr, kaddr_t val) {
-	return kwrite_buf(addr, &val, sizeof(val));
+kwrite_addr(kaddr_t addr, kaddr_t value) {
+	return kwrite_buf(addr, &value, sizeof(value));
 }
 
 static kern_return_t
@@ -608,8 +610,8 @@ pfinder_pmap_find_phys(pfinder_t pfinder) {
 
 	if(ref) {
 		for(i = (ref - pfinder.sec_text_start) / sizeof(*insn); i > 0; --i) {
-			if(IS_BL(insn[i])) {
-				return pfinder.sec_text_start + (i * sizeof(*insn)) + BL_IMM(insn[i]);
+			if(IS_MOV_X(insn[i]) && RD(insn[i]) == 1 && IS_BL(insn[i + 1])) {
+				return pfinder.sec_text_start + ((i + 1) * sizeof(*insn)) + BL_IMM(insn[i + 1]);
 			}
 		}
 	}

@@ -9,6 +9,7 @@
 #define TASK_ITK_REGISTERED_OFF (0x2E8)
 #define IO_AES_ACCELERATOR_SPECIAL_KEYS_OFF (0xD0)
 #define IO_AES_ACCELERATOR_SPECIAL_KEY_CNT_OFF (0xD8)
+#define VM_KERNEL_LINK_ADDRESS (0xFFFFFFF007004000ULL)
 
 #define ARM_PGSHIFT_4K (12U)
 #define ARM_PGSHIFT_16K (14U)
@@ -54,7 +55,6 @@ typedef struct {
 	kaddr_t sec_cstring_start;
 	uint64_t sec_cstring_sz;
 	void *sec_cstring;
-	kaddr_t pc;
 } pfinder_t;
 
 typedef struct {
@@ -155,7 +155,7 @@ get_kbase(kaddr_t *kslide) {
 
 	if(task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
 		*kslide = dyld_info.all_image_info_size;
-		return dyld_info.all_image_info_addr;
+		return VM_KERNEL_LINK_ADDRESS + *kslide;
 	}
 	return 0;
 }
@@ -191,8 +191,8 @@ kread_buf_alloc(kaddr_t addr, mach_vm_size_t read_sz) {
 }
 
 static kern_return_t
-kread_addr(kaddr_t addr, kaddr_t *val) {
-	return kread_buf(addr, val, sizeof(*val));
+kread_addr(kaddr_t addr, kaddr_t *value) {
+	return kread_buf(addr, value, sizeof(*value));
 }
 
 static const struct section_64 *
@@ -214,12 +214,10 @@ pfinder_reset(pfinder_t *pfinder) {
 	pfinder->sec_text = pfinder->sec_cstring = NULL;
 	pfinder->sec_text_start = pfinder->sec_text_sz = 0;
 	pfinder->sec_cstring_start = pfinder->sec_cstring_sz = 0;
-	pfinder->pc = 0;
 }
 
 static kern_return_t
-pfinder_init(pfinder_t *pfinder, kaddr_t kbase, kaddr_t kslide) {
-	const arm_unified_thread_state_t *state;
+pfinder_init(pfinder_t *pfinder, kaddr_t kbase) {
 	const struct segment_command_64 *sgp;
 	kern_return_t ret = KERN_FAILURE;
 	const struct section_64 *sp;
@@ -241,11 +239,8 @@ pfinder_init(pfinder_t *pfinder, kaddr_t kbase, kaddr_t kslide) {
 					pfinder->sec_cstring_sz = sp->size;
 					printf("sec_cstring_start: " KADDR_FMT ", sec_cstring_sz: 0x%" PRIx64 "\n", pfinder->sec_cstring_start, pfinder->sec_cstring_sz);
 				}
-			} else if(sgp->cmd == LC_UNIXTHREAD) {
-				state = (const arm_unified_thread_state_t *)((uintptr_t)sgp + sizeof(struct thread_command));
-				pfinder->pc = state->ts_64.__pc + kslide;
 			}
-			if(pfinder->sec_text_sz && pfinder->sec_cstring_sz && pfinder->pc) {
+			if(pfinder->sec_text_sz && pfinder->sec_cstring_sz) {
 				if((pfinder->sec_text = kread_buf_alloc(pfinder->sec_text_start, pfinder->sec_text_sz))) {
 					if((pfinder->sec_cstring = kread_buf_alloc(pfinder->sec_cstring_start, pfinder->sec_cstring_sz))) {
 						ret = KERN_SUCCESS;
@@ -409,7 +404,7 @@ main(void) {
 			if((kbase = get_kbase(&kslide))) {
 				printf("kbase: " KADDR_FMT "\n", kbase);
 				printf("kslide: " KADDR_FMT "\n", kslide);
-				if(pfinder_init(&pfinder, kbase, kslide) == KERN_SUCCESS) {
+				if(pfinder_init(&pfinder, kbase) == KERN_SUCCESS) {
 					if(pfinder_init_offsets(pfinder) == KERN_SUCCESS) {
 						key_dumper();
 					}
