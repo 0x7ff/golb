@@ -3,21 +3,27 @@
 #include <mach/mach.h>
 #include <sys/sysctl.h>
 
-#define TASK_MAP_OFF (0x20)
 #define PMGR_SIZE (0x100000)
 #define PROC_TASK_OFF (0x10)
-#define PROC_P_PID_OFF (0x60)
 #define VM_MAP_PMAP_OFF (0x48)
 #define IO_BASE (0x200000000ULL)
 #define VM_MAP_FLAGS_OFF (0x10C)
 #define USER_CLIENT_TRAP_OFF (0x40)
 #define IPC_PORT_IP_KOBJECT_OFF (0x68)
-#define TASK_ITK_REGISTERED_OFF (0x2E8)
-#define VTAB_GET_EXTERNAL_TRAP_FOR_INDEX_OFF (0x5B8)
+#define CPU_DATA_CPU_EXC_VECTORS_OFF (0xE0)
 #define VM_KERNEL_LINK_ADDRESS (0xFFFFFFF007004000ULL)
+#define kCFCoreFoundationVersionNumber_iOS_13_0_b2 (1656)
+#define kCFCoreFoundationVersionNumber_iOS_13_0_b1 (1652.20)
+#define kCFCoreFoundationVersionNumber_iOS_13_2_b1 (1673.12)
+#define TASK_MAP_OFF (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b1 ? 0x28 : 0x20)
+#define PROC_P_PID_OFF (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b2 ? 0x68 : 0x60)
+#define PMAP_NESTED_PMAP_OFF (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_2_b1 ? 0x98 : 0xA0)
+#define TASK_ITK_REGISTERED_OFF (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b1 ? 0x308 : 0x2E8)
+#define VTAB_GET_EXTERNAL_TRAP_FOR_INDEX_OFF (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b1 ? 0x5C0 : 0x5B8)
 
 #define AP_RWRW (1U)
 #define AP_RORO (3U)
+#define PMAP_NULL (0)
 #define PVH_LOCK_BIT (61U)
 #define PVH_TYPE_PTEP (2U)
 #define ARM_PTE_AF (0x400U)
@@ -26,6 +32,7 @@
 #define ARM_PGSHIFT_4K (12U)
 #define ARM_PGSHIFT_16K (14U)
 #define KADDR_FMT "0x%" PRIx64
+#define VM_KERN_MEMORY_CPU (9)
 #define ARM64_VMADDR_BITS (48U)
 #define ARM_PTE_TYPE_VALID (3U)
 #define RD(a) extract32(a, 0, 5)
@@ -35,7 +42,6 @@
 #define PVH_FLAG_CPU (1ULL << 62U)
 #define PVH_FLAG_EXEC (1ULL << 60U)
 #define CACHE_ATTRINDX_DISABLE (3U)
-#define IS_ISB(a) ((a) == 0xD5033FDFU)
 #define IS_RET(a) ((a) == 0xD65F03C0U)
 #define ADRP_ADDR(a) ((a) & ~0xFFFULL)
 #define PVH_LIST_MASK (~PVH_TYPE_MASK)
@@ -50,11 +56,9 @@
 #define ARM_PTE_PNX (0x20000000000000ULL)
 #define ADD_X_IMM(a) extract32(a, 10, 12)
 #define TRUNC_PAGE(a) ((a) & ~ARM_PGMASK)
-#define IS_DSB_ISH(a) ((a) == 0xD5033B9FU)
-#define FAULT_MAGIC (0x4455445564666477ULL)
+#define FAULT_MAGIC (0xAAAAAAAAAAAAAAAAULL)
 #define PVH_FLAG_LOCK (1ULL << PVH_LOCK_BIT)
 #define BL_IMM(a) (sextract64(a, 0, 26) << 2U)
-#define IS_TLBI_VMALLE1(a) ((a) == 0xD508871FU)
 #define LDR_X_IMM(a) (sextract64(a, 5, 19) << 2U)
 #define ROUND_PAGE(a) TRUNC_PAGE((a) + ARM_PGMASK)
 #define IS_BL(a) (((a) & 0xFC000000U) == 0x94000000U)
@@ -62,11 +66,13 @@
 #define IS_IN_RANGE(a, b, c) ((a) >= (b) && (a) < (c))
 #define IS_ADRP(a) (((a) & 0x9F000000U) == 0x90000000U)
 #define IS_B_EQ(a) (((a) & 0xFF00001FU) == 0x54000000U)
+#define IS_SUB_X(a) (((a) & 0xFFC00000U) == 0xD1000000U)
 #define IS_CBZ_W(a) (((a) & 0xFF000000U) == 0x34000000U)
 #define IS_ADD_X(a) (((a) & 0xFFC00000U) == 0x91000000U)
 #define IS_LDR_X(a) (((a) & 0xFF000000U) == 0x58000000U)
 #define IS_MOV_X(a) (((a) & 0xFFE00000U) == 0xAA000000U)
 #define LDR_X_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 3U)
+#define IS_STP_X_PRE_IDX(a) (((a) & 0xFFC00000U) == 0xA9800000U)
 #define ARM_PTE_MASK TRUNC_PAGE((1ULL << ARM64_VMADDR_BITS) - 1)
 #define IS_LDR_X_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xF9400000U)
 #define ADR_IMM(a) ((sextract64(a, 5, 19) << 2U) | extract32(a, 29, 2))
@@ -100,6 +106,7 @@
 #define AES_KEY_TYPE_GID1 (0x201U)
 #define AES_KEY_TYPE_MASK (0xFFFU)
 #define COMMAND_OPCODE_SHIFT (28U)
+#define AES_KEY_SIZE_BYTES_256 (32)
 #define PMGR_PS_ACTUAL_PS_MASK (15U)
 #define PMGR_PS_MANUAL_PS_MASK (15U)
 #define PMGR_PS_ACTUAL_PS_SHIFT (4U)
@@ -250,6 +257,9 @@ kern_return_t
 mach_vm_machine_attribute(vm_map_t, mach_vm_address_t, mach_vm_size_t, vm_machine_attribute_t, vm_machine_attribute_val_t *);
 
 kern_return_t
+mach_vm_region(vm_map_t, mach_vm_address_t *, mach_vm_size_t *, vm_region_flavor_t, vm_region_info_t, mach_msg_type_number_t *, mach_port_t *);
+
+kern_return_t
 mach_vm_deallocate(vm_map_t, mach_vm_address_t, mach_vm_size_t);
 
 kern_return_t
@@ -278,7 +288,7 @@ static boot_args_t boot_args;
 static task_t tfp0 = MACH_PORT_NULL;
 static phys_ctx_t pmgr_ctx, aes_ap_ctx;
 static io_connect_t g_conn = IO_OBJECT_NULL;
-static kaddr_t allproc, csblob_get_cdhash, pmap_find_phys, const_boot_args, flush_core_tlb, pv_head_table_ptr, pv_head_table, orig_vtab, fake_vtab, user_client, our_pmap, aes_ap_base_off, pmgr_base_off, aes_ap_virt_base, pmgr_virt_base, pmgr_aes0_ps_off;
+static kaddr_t allproc, csblob_get_cdhash, pmap_find_phys, const_boot_args, pmap_switch, pv_head_table_ptr, pv_head_table, orig_vtab, fake_vtab, user_client, our_pmap, aes_ap_base_off, pmgr_base_off, aes_ap_virt_base, pmgr_virt_base, pmgr_aes0_ps_off;
 
 static key_seed_t uid_key_seeds[] = {
 	{ 0x839, { 0xC55BB624, 0xDCDCDD8F, 0x6C8B5498, 0x4D84E73E }, { 0 } },
@@ -302,6 +312,31 @@ extract32(uint32_t value, unsigned start, unsigned length) {
 static uint64_t
 sextract64(uint64_t value, unsigned start, unsigned length) {
 	return (uint64_t)((int64_t)(value << (64U - length - start)) >> (64U - length));
+}
+
+static size_t
+str2hex(const char *str, uint8_t *buf, size_t buf_len) {
+	char l, h = 0;
+	size_t i;
+
+	for(i = 0; i < buf_len << 1U; ++i) {
+		l = str[i];
+		if(l >= '0' && l <= '9') {
+			l -= '0';
+		} else if(l >= 'A' && l <= 'F') {
+			l -= 'A' - 10;
+		} else if(l >= 'a' && l <= 'f') {
+			l -= 'a' - 10;
+		} else {
+			break;
+		}
+		if(i & 1) {
+			buf[i >> 1U] = (uint8_t)((h << 4U) | l);
+		} else {
+			h = l;
+		}
+	}
+	return i;
 }
 
 static kern_return_t
@@ -352,6 +387,13 @@ init_arm_globals(void) {
 				aes_ap_base_off = 0x35008000;
 				arm_pgshift = ARM_PGSHIFT_16K;
 				return KERN_SUCCESS;
+			case CPUFAMILY_ARM_LIGHTNING_THUNDER:
+				aes_ap_v2 = true;
+				pmgr_base_off = 0x3B000000;
+				pmgr_aes0_ps_off = 0x801D0;
+				aes_ap_base_off = 0x35008000;
+				arm_pgshift = ARM_PGSHIFT_16K;
+				return KERN_SUCCESS;
 #endif
 			default:
 				break;
@@ -381,18 +423,6 @@ init_tfp0(void) {
 		mach_port_deallocate(mach_task_self(), tfp0);
 	}
 	return KERN_FAILURE;
-}
-
-static kaddr_t
-get_kbase(kaddr_t *kslide) {
-	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
-	task_dyld_info_data_t dyld_info;
-
-	if(task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
-		*kslide = dyld_info.all_image_info_size;
-		return VM_KERNEL_LINK_ADDRESS + *kslide;
-	}
-	return 0;
 }
 
 static kern_return_t
@@ -461,6 +491,43 @@ kalloc(mach_vm_size_t sz, kaddr_t *addr) {
 static kern_return_t
 kfree(kaddr_t addr, mach_vm_size_t sz) {
 	return mach_vm_deallocate(tfp0, addr, sz);
+}
+
+static kaddr_t
+get_kbase(kaddr_t *kslide) {
+	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
+	vm_region_extended_info_data_t extended_info;
+	task_dyld_info_data_t dyld_info;
+	kaddr_t addr, cpu_exc_vectors;
+	mach_port_t obj_nm;
+	mach_vm_size_t sz;
+	uint32_t magic;
+
+	if(task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS && dyld_info.all_image_info_size) {
+		*kslide = dyld_info.all_image_info_size;
+		return VM_KERNEL_LINK_ADDRESS + *kslide;
+	}
+	addr = 0;
+	cnt = VM_REGION_EXTENDED_INFO_COUNT;
+	while(mach_vm_region(tfp0, &addr, &sz, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&extended_info, &cnt, &obj_nm) == KERN_SUCCESS) {
+		mach_port_deallocate(mach_task_self(), obj_nm);
+		if(extended_info.user_tag == VM_KERN_MEMORY_CPU && extended_info.protection == VM_PROT_DEFAULT) {
+			if(kread_addr(addr + CPU_DATA_CPU_EXC_VECTORS_OFF, &cpu_exc_vectors) != KERN_SUCCESS || (cpu_exc_vectors & ARM_PGMASK)) {
+				break;
+			}
+			printf("cpu_exc_vectors: " KADDR_FMT "\n", cpu_exc_vectors);
+			do {
+				cpu_exc_vectors -= ARM_PGBYTES;
+				if(cpu_exc_vectors <= VM_KERNEL_LINK_ADDRESS || kread_buf(cpu_exc_vectors, &magic, sizeof(magic)) != KERN_SUCCESS) {
+					return 0;
+				}
+			} while(magic != MH_MAGIC_64);
+			*kslide = cpu_exc_vectors - VM_KERNEL_LINK_ADDRESS;
+			return cpu_exc_vectors;
+		}
+		addr += sz;
+	}
+	return 0;
 }
 
 static const struct section_64 *
@@ -649,13 +716,33 @@ pfinder_const_boot_args(pfinder_t pfinder) {
 }
 
 static kaddr_t
-pfinder_flush_core_tlb(pfinder_t pfinder) {
+pfinder_swap_task_map(pfinder_t pfinder) {
+	kaddr_t ref = pfinder_xref_str(pfinder, "\"swap_task_map\"", 0);
 	const uint32_t *insn = pfinder.sec_text;
 	size_t i;
 
-	for(i = 0; i < (pfinder.sec_text_sz / sizeof(*insn)) - 3; ++i) {
-		if(IS_TLBI_VMALLE1(insn[i]) && IS_DSB_ISH(insn[i + 1]) && IS_ISB(insn[i + 2]) && IS_RET(insn[i + 3])) {
-			return pfinder.sec_text_start + (i * sizeof(*insn));
+	if(ref) {
+		for(i = (ref - pfinder.sec_text_start) / sizeof(*insn); i > 0; --i) {
+			if(RN(insn[i]) == 31 && ((IS_SUB_X(insn[i]) && RD(insn[i]) == 31) || IS_STP_X_PRE_IDX(insn[i]))) {
+				return pfinder.sec_text_start + (i * sizeof(*insn));
+			}
+		}
+	}
+	return 0;
+}
+
+static kaddr_t
+pfinder_pmap_switch(pfinder_t pfinder) {
+	kaddr_t ref = pfinder_swap_task_map(pfinder);
+	const uint32_t *insn = pfinder.sec_text;
+	size_t i;
+
+	if(ref) {
+		printf("swap_task_map: " KADDR_FMT "\n", ref);
+		for(i = (ref - pfinder.sec_text_start) / sizeof(*insn); i < (pfinder.sec_text_sz / sizeof(*insn)) - 1; ++i) {
+			if(IS_LDR_X_UNSIGNED_IMM(insn[i]) && LDR_X_UNSIGNED_IMM(insn[i]) == VM_MAP_PMAP_OFF && RD(insn[i]) == 0 && IS_BL(insn[i + 1])) {
+				return pfinder.sec_text_start + ((i + 1) * sizeof(*insn)) + BL_IMM(insn[i + 1]);
+			}
 		}
 	}
 	return 0;
@@ -673,8 +760,8 @@ pfinder_init_offsets(pfinder_t pfinder) {
 					printf("pv_head_table_ptr: " KADDR_FMT "\n", pv_head_table_ptr);
 					if((const_boot_args = pfinder_const_boot_args(pfinder))) {
 						printf("const_boot_args: " KADDR_FMT "\n", const_boot_args);
-						if((flush_core_tlb = pfinder_flush_core_tlb(pfinder))) {
-							printf("flush_core_tlb: " KADDR_FMT "\n", flush_core_tlb);
+						if((pmap_switch = pfinder_pmap_switch(pfinder))) {
+							printf("pmap_switch: " KADDR_FMT "\n", pmap_switch);
 							return KERN_SUCCESS;
 						}
 					}
@@ -827,15 +914,29 @@ phys_init(void) {
 	return KERN_FAILURE;
 }
 
+static kern_return_t
+phys_flush_core_tlb(void) {
+	kern_return_t ret = KERN_FAILURE;
+	kaddr_t nested_pmap;
+
+	if(kread_addr(our_pmap + PMAP_NESTED_PMAP_OFF, &nested_pmap) == KERN_SUCCESS) {
+		printf("nested_pmap: " KADDR_FMT "\n", nested_pmap);
+		if(kwrite_addr(our_pmap + PMAP_NESTED_PMAP_OFF, PMAP_NULL) == KERN_SUCCESS) {
+			ret = kcall(&ret, pmap_switch, 1, our_pmap);
+			kwrite_addr(our_pmap + PMAP_NESTED_PMAP_OFF, nested_pmap);
+		}
+	}
+	return ret;
+}
+
 static void
 phys_unmap(phys_ctx_t ctx) {
-	kern_return_t ret;
 	size_t i;
 
 	for(i = 0; i < ctx.orig_cnt; ++i) {
 		kwrite_addr(ctx.orig[i].ptep, ctx.orig[i].pte);
 	}
-	kcall(&ret, flush_core_tlb, 0);
+	phys_flush_core_tlb();
 	free(ctx.orig);
 }
 
@@ -891,7 +992,7 @@ phys_map(phys_ctx_t *ctx, kaddr_t virt, kaddr_t phys, mach_vm_size_t sz, vm_prot
 		virt += ARM_PGBYTES;
 		sz -= ARM_PGBYTES;
 	}
-	if(sz || kcall(&ret, flush_core_tlb, 0) != KERN_SUCCESS) {
+	if(sz || phys_flush_core_tlb() != KERN_SUCCESS) {
 		phys_unmap(*ctx);
 		return KERN_FAILURE;
 	}
@@ -1151,12 +1252,16 @@ aes_ap_term(void) {
 }
 
 int
-main(void) {
+main(int argc, char **argv) {
+	uint8_t kbag[AES_BLOCK_SIZE + AES_KEY_SIZE_BYTES_256];
 	kaddr_t kbase, kslide;
 	kern_return_t ret;
 	pfinder_t pfinder;
+	size_t i;
 
-	if(init_arm_globals() == KERN_SUCCESS) {
+	if(argc == 2 && str2hex(argv[1], kbag, sizeof(kbag)) != 2 * sizeof(kbag)) {
+		printf("Usage: %s [KBAG]\n", argv[0]);
+	} else if(init_arm_globals() == KERN_SUCCESS) {
 		printf("arm_pgshift: %u\n", arm_pgshift);
 		printf("pmgr_base_off: " KADDR_FMT "\n", pmgr_base_off);
 		printf("aes_ap_base_off: " KADDR_FMT "\n", aes_ap_base_off);
@@ -1170,11 +1275,19 @@ main(void) {
 					if(pfinder_init_offsets(pfinder) == KERN_SUCCESS && kcall_init() == KERN_SUCCESS) {
 						if(kcall(&ret, csblob_get_cdhash, 1, USER_CLIENT_TRAP_OFF) == KERN_SUCCESS) {
 							printf("csblob_get_cdhash(USER_CLIENT_TRAP_OFF): 0x%" PRIx32 "\n", ret);
-							if(phys_init() == KERN_SUCCESS) {
-								if(aes_ap_init() == KERN_SUCCESS) {
+							if(phys_init() == KERN_SUCCESS && aes_ap_init() == KERN_SUCCESS) {
+								if(argc == 2) {
+									if(aes_ap_cmd(AES_CMD_CBC | AES_CMD_DEC, kbag, kbag, sizeof(kbag), AES_KEY_SIZE_256 | AES_KEY_TYPE_GID0) == KERN_SUCCESS) {
+										printf("kbag_dec: ");
+										for(i = 0; i < sizeof(kbag); ++i) {
+											printf("%02" PRIx8, kbag[i]);
+										}
+										putchar('\n');
+									}
+								} else {
 									aes_ap_test();
-									aes_ap_term();
 								}
+								aes_ap_term();
 							}
 						}
 						kcall_term();
