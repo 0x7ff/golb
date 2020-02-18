@@ -10,7 +10,11 @@
 #define VM_MAP_FLAGS_OFF (0x10C)
 #define USER_CLIENT_TRAP_OFF (0x40)
 #define IPC_PORT_IP_KOBJECT_OFF (0x68)
-#define CPU_DATA_CPU_EXC_VECTORS_OFF (0xE0)
+#ifdef __arm64e__
+#	define CPU_DATA_RTCLOCK_DATAP_OFF (0x190)
+#else
+#	define CPU_DATA_RTCLOCK_DATAP_OFF (0x198)
+#endif
 #define VM_KERNEL_LINK_ADDRESS (0xFFFFFFF007004000ULL)
 #define kCFCoreFoundationVersionNumber_iOS_13_0_b2 (1656)
 #define kCFCoreFoundationVersionNumber_iOS_13_0_b1 (1652.20)
@@ -29,15 +33,12 @@
 #define ARM_PTE_AF (0x400U)
 #define ARM_PTE_NG (0x800U)
 #define PVH_TYPE_MASK (3ULL)
-#define ARM_PGSHIFT_4K (12U)
-#define ARM_PGSHIFT_16K (14U)
 #define KADDR_FMT "0x%" PRIx64
 #define VM_KERN_MEMORY_CPU (9)
 #define ARM64_VMADDR_BITS (48U)
 #define ARM_PTE_TYPE_VALID (3U)
 #define RD(a) extract32(a, 0, 5)
 #define RN(a) extract32(a, 5, 5)
-#define MAX_VTAB_SZ (ARM_PGBYTES)
 #define ARM_PTE_AP(a) ((a) << 6U)
 #define PVH_FLAG_CPU (1ULL << 62U)
 #define PVH_FLAG_EXEC (1ULL << 60U)
@@ -46,21 +47,18 @@
 #define ADRP_ADDR(a) ((a) & ~0xFFFULL)
 #define PVH_LIST_MASK (~PVH_TYPE_MASK)
 #define VM_MAP_FLAGS_NO_ZERO_FILL (4U)
-#define ARM_PGMASK (ARM_PGBYTES - 1ULL)
 #define ADRP_IMM(a) (ADR_IMM(a) << 12U)
-#define ARM_PGBYTES (1U << arm_pgshift)
 #define IO_OBJECT_NULL ((io_object_t)0)
 #define PVH_FLAG_LOCKDOWN (1ULL << 59U)
 #define ARM_PTE_ATTRINDX(a) ((a) << 2U)
 #define ARM_PTE_NX (0x40000000000000ULL)
 #define ARM_PTE_PNX (0x20000000000000ULL)
+#define MAX_VTAB_SZ (vm_kernel_page_size)
 #define ADD_X_IMM(a) extract32(a, 10, 12)
-#define TRUNC_PAGE(a) ((a) & ~ARM_PGMASK)
 #define FAULT_MAGIC (0xAAAAAAAAAAAAAAAAULL)
 #define PVH_FLAG_LOCK (1ULL << PVH_LOCK_BIT)
 #define BL_IMM(a) (sextract64(a, 0, 26) << 2U)
 #define LDR_X_IMM(a) (sextract64(a, 5, 19) << 2U)
-#define ROUND_PAGE(a) TRUNC_PAGE((a) + ARM_PGMASK)
 #define IS_BL(a) (((a) & 0xFC000000U) == 0x94000000U)
 #define IS_ADR(a) (((a) & 0x9F000000U) == 0x10000000U)
 #define IS_IN_RANGE(a, b, c) ((a) >= (b) && (a) < (c))
@@ -73,9 +71,9 @@
 #define IS_MOV_X(a) (((a) & 0xFFE00000U) == 0xAA000000U)
 #define LDR_X_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 3U)
 #define IS_STP_X_PRE_IDX(a) (((a) & 0xFFC00000U) == 0xA9800000U)
-#define ARM_PTE_MASK TRUNC_PAGE((1ULL << ARM64_VMADDR_BITS) - 1)
 #define IS_LDR_X_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xF9400000U)
 #define ADR_IMM(a) ((sextract64(a, 5, 19) << 2U) | extract32(a, 29, 2))
+#define ARM_PTE_MASK trunc_page_kernel((1ULL << ARM64_VMADDR_BITS) - 1)
 #define PVH_HIGH_FLAGS (PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN)
 
 #define OPCODE_IV (2U)
@@ -98,7 +96,6 @@
 #define AES_CMD_DIR_MASK (15U)
 #define KEY_SELECT_GID_AP_1 (2U)
 #define KEY_SELECT_GID_AP_2 (3U)
-#define AES_AP_SIZE (ARM_PGBYTES)
 #define TXT_IN_STS_RDY (1U << 0U)
 #define AES_CMD_MODE_MASK (0xF0U)
 #define AES_KEY_TYPE_UID0 (0x100U)
@@ -129,6 +126,7 @@
 #define KEY_IN_CTRL_SEL_GID1 (3U << 4U)
 #define AES_BLK_CONTROL_STOP_UMASK (2U)
 #define AES_BLK_CONTROL_START_UMASK (1U)
+#define AES_AP_SIZE (vm_kernel_page_size)
 #define COMMAND_FLAG_STOP_COMMANDS_SHIFT (26U)
 #define COMMAND_DATA_COMMAND_LENGTH_SHIFT (0U)
 #define COMMAND_KEY_COMMAND_ENCRYPT_SHIFT (20U)
@@ -283,7 +281,6 @@ IOServiceClose(io_connect_t);
 extern const mach_port_t kIOMasterPortDefault;
 
 static bool aes_ap_v2;
-static unsigned arm_pgshift;
 static boot_args_t boot_args;
 static task_t tfp0 = MACH_PORT_NULL;
 static phys_ctx_t pmgr_ctx, aes_ap_ctx;
@@ -330,7 +327,7 @@ str2hex(const char *str, uint8_t *buf, size_t buf_len) {
 		} else {
 			break;
 		}
-		if(i & 1) {
+		if(i & 1U) {
 			buf[i >> 1U] = (uint8_t)((h << 4U) | l);
 		} else {
 			h = l;
@@ -350,34 +347,29 @@ init_arm_globals(void) {
 				pmgr_base_off = 0xE000000;
 				pmgr_aes0_ps_off = 0x20100;
 				aes_ap_base_off = 0xA108000;
-				arm_pgshift = ARM_PGSHIFT_4K;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_TYPHOON:
 				pmgr_base_off = 0xE000000;
 				pmgr_aes0_ps_off = 0x201E8;
 				aes_ap_base_off = 0xA108000;
-				arm_pgshift = ARM_PGSHIFT_4K;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_TWISTER:
 				aes_ap_v2 = true;
 				pmgr_base_off = 0xE000000;
 				pmgr_aes0_ps_off = 0x80210;
 				aes_ap_base_off = 0xA108000;
-				arm_pgshift = ARM_PGSHIFT_16K;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_HURRICANE:
 				aes_ap_v2 = true;
 				pmgr_base_off = 0xE000000;
 				pmgr_aes0_ps_off = 0x80220;
 				aes_ap_base_off = 0xA108000;
-				arm_pgshift = ARM_PGSHIFT_16K;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_MONSOON_MISTRAL:
 				aes_ap_v2 = true;
 				pmgr_base_off = 0x32000000;
 				pmgr_aes0_ps_off = 0x80240;
 				aes_ap_base_off = 0x2E008000;
-				arm_pgshift = ARM_PGSHIFT_16K;
 				return KERN_SUCCESS;
 #if 0
 			case CPUFAMILY_ARM_VORTEX_TEMPEST:
@@ -385,14 +377,12 @@ init_arm_globals(void) {
 				pmgr_base_off = 0x3B000000;
 				pmgr_aes0_ps_off = 0x80220;
 				aes_ap_base_off = 0x35008000;
-				arm_pgshift = ARM_PGSHIFT_16K;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_LIGHTNING_THUNDER:
 				aes_ap_v2 = true;
 				pmgr_base_off = 0x3B000000;
 				pmgr_aes0_ps_off = 0x801D0;
 				aes_ap_base_off = 0x35008000;
-				arm_pgshift = ARM_PGSHIFT_16K;
 				return KERN_SUCCESS;
 #endif
 			default:
@@ -431,7 +421,7 @@ kread_buf(kaddr_t addr, void *buf, mach_vm_size_t sz) {
 	mach_vm_size_t read_sz, out_sz = 0;
 
 	while(sz) {
-		read_sz = MIN(sz, ARM_PGBYTES - (addr & ARM_PGMASK));
+		read_sz = MIN(sz, vm_kernel_page_size - (addr & vm_kernel_page_mask));
 		if(mach_vm_read_overwrite(tfp0, addr, read_sz, p, &out_sz) != KERN_SUCCESS || out_sz != read_sz) {
 			return KERN_FAILURE;
 		}
@@ -467,7 +457,7 @@ kwrite_buf(kaddr_t addr, const void *buf, mach_msg_type_number_t sz) {
 	mach_msg_type_number_t write_sz;
 
 	while(sz) {
-		write_sz = MIN(sz, ARM_PGBYTES - (addr & ARM_PGMASK));
+		write_sz = (mach_msg_type_number_t)MIN(sz, vm_kernel_page_size - (addr & vm_kernel_page_mask));
 		if(mach_vm_write(tfp0, addr, p, write_sz) != KERN_SUCCESS || mach_vm_machine_attribute(tfp0, addr, write_sz, MATTR_CACHE, &mattr_val) != KERN_SUCCESS) {
 			return KERN_FAILURE;
 		}
@@ -498,7 +488,7 @@ get_kbase(kaddr_t *kslide) {
 	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
 	vm_region_extended_info_data_t extended_info;
 	task_dyld_info_data_t dyld_info;
-	kaddr_t addr, cpu_exc_vectors;
+	kaddr_t addr, rtclock_datap;
 	mach_port_t obj_nm;
 	mach_vm_size_t sz;
 	uint32_t magic;
@@ -512,18 +502,19 @@ get_kbase(kaddr_t *kslide) {
 	while(mach_vm_region(tfp0, &addr, &sz, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&extended_info, &cnt, &obj_nm) == KERN_SUCCESS) {
 		mach_port_deallocate(mach_task_self(), obj_nm);
 		if(extended_info.user_tag == VM_KERN_MEMORY_CPU && extended_info.protection == VM_PROT_DEFAULT) {
-			if(kread_addr(addr + CPU_DATA_CPU_EXC_VECTORS_OFF, &cpu_exc_vectors) != KERN_SUCCESS || (cpu_exc_vectors & ARM_PGMASK)) {
+			if(kread_addr(addr + CPU_DATA_RTCLOCK_DATAP_OFF, &rtclock_datap) != KERN_SUCCESS) {
 				break;
 			}
-			printf("cpu_exc_vectors: " KADDR_FMT "\n", cpu_exc_vectors);
+			printf("rtclock_datap: " KADDR_FMT "\n", rtclock_datap);
+			rtclock_datap = trunc_page_kernel(rtclock_datap);
 			do {
-				cpu_exc_vectors -= ARM_PGBYTES;
-				if(cpu_exc_vectors <= VM_KERNEL_LINK_ADDRESS || kread_buf(cpu_exc_vectors, &magic, sizeof(magic)) != KERN_SUCCESS) {
+				rtclock_datap -= vm_kernel_page_size;
+				if(rtclock_datap <= VM_KERNEL_LINK_ADDRESS || kread_buf(rtclock_datap, &magic, sizeof(magic)) != KERN_SUCCESS) {
 					return 0;
 				}
 			} while(magic != MH_MAGIC_64);
-			*kslide = cpu_exc_vectors - VM_KERNEL_LINK_ADDRESS;
-			return cpu_exc_vectors;
+			*kslide = rtclock_datap - VM_KERNEL_LINK_ADDRESS;
+			return rtclock_datap;
 		}
 		addr += sz;
 	}
@@ -945,14 +936,14 @@ phys_map(phys_ctx_t *ctx, kaddr_t virt, kaddr_t phys, mach_vm_size_t sz, vm_prot
 	kaddr_t phys_off, vphys, pv_h, ptep, orig_pte, fake_pte;
 	kern_return_t ret;
 
-	if(virt & ARM_PGMASK) {
+	if(virt & vm_kernel_page_mask) {
 		return KERN_FAILURE;
 	}
-	phys_off = phys & ARM_PGMASK;
-	sz = ROUND_PAGE(sz + phys_off);
+	phys_off = phys & vm_kernel_page_mask;
+	sz = round_page_kernel(sz + phys_off);
 	phys -= phys_off;
 	ctx->orig_cnt = 0;
-	ctx->orig = calloc(sz >> arm_pgshift, sizeof(ctx->orig[0]));
+	ctx->orig = calloc(sz >> vm_kernel_page_shift, sizeof(ctx->orig[0]));
 	if(!ctx->orig) {
 		return KERN_FAILURE;
 	}
@@ -961,12 +952,12 @@ phys_map(phys_ctx_t *ctx, kaddr_t virt, kaddr_t phys, mach_vm_size_t sz, vm_prot
 		if(kcall(&ret, pmap_find_phys, 2, our_pmap, virt) != KERN_SUCCESS || ret <= 0) {
 			break;
 		}
-		vphys = (kaddr_t)ret << arm_pgshift;
+		vphys = (kaddr_t)ret << vm_kernel_page_shift;
 		printf("vphys: " KADDR_FMT "\n", vphys);
-		if(!IS_IN_RANGE(vphys, boot_args.phys_base, TRUNC_PAGE(boot_args.phys_base + boot_args.mem_size))) {
+		if(!IS_IN_RANGE(vphys, boot_args.phys_base, trunc_page_kernel(boot_args.phys_base + boot_args.mem_size))) {
 			break;
 		}
-		if(kread_addr(pv_head_table + ((vphys - boot_args.phys_base) >> arm_pgshift) * sizeof(kaddr_t), &pv_h) != KERN_SUCCESS) {
+		if(kread_addr(pv_head_table + ((vphys - boot_args.phys_base) >> vm_kernel_page_shift) * sizeof(kaddr_t), &pv_h) != KERN_SUCCESS) {
 			break;
 		}
 		printf("pv_h: " KADDR_FMT "\n", pv_h);
@@ -988,9 +979,9 @@ phys_map(phys_ctx_t *ctx, kaddr_t virt, kaddr_t phys, mach_vm_size_t sz, vm_prot
 		if(kwrite_addr(ptep, fake_pte) != KERN_SUCCESS) {
 			break;
 		}
-		phys += ARM_PGBYTES;
-		virt += ARM_PGBYTES;
-		sz -= ARM_PGBYTES;
+		phys += vm_kernel_page_size;
+		virt += vm_kernel_page_size;
+		sz -= vm_kernel_page_size;
 	}
 	if(sz || phys_flush_core_tlb() != KERN_SUCCESS) {
 		phys_unmap(*ctx);
@@ -1206,20 +1197,20 @@ aes_ap_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opts) 
 			if(kcall(&ppn, pmap_find_phys, 2, our_pmap, virt_src) != KERN_SUCCESS || ppn <= 0) {
 				return KERN_FAILURE;
 			}
-			phys_src = ((kaddr_t)ppn << arm_pgshift) | (virt_src & ARM_PGMASK);
+			phys_src = ((kaddr_t)ppn << vm_kernel_page_shift) | (virt_src & vm_kernel_page_mask);
 			printf("phys_src: " KADDR_FMT "\n", phys_src);
-			if(!IS_IN_RANGE(phys_src, boot_args.phys_base, TRUNC_PAGE(boot_args.phys_base + boot_args.mem_size))) {
+			if(!IS_IN_RANGE(phys_src, boot_args.phys_base, trunc_page_kernel(boot_args.phys_base + boot_args.mem_size))) {
 				return KERN_FAILURE;
 			}
 			if(kcall(&ppn, pmap_find_phys, 2, our_pmap, virt_dst) != KERN_SUCCESS || ppn <= 0) {
 				return KERN_FAILURE;
 			}
-			phys_dst = ((kaddr_t)ppn << arm_pgshift) | (virt_dst & ARM_PGMASK);
+			phys_dst = ((kaddr_t)ppn << vm_kernel_page_shift) | (virt_dst & vm_kernel_page_mask);
 			printf("phys_dst: " KADDR_FMT "\n", phys_dst);
-			if(!IS_IN_RANGE(phys_dst, boot_args.phys_base, TRUNC_PAGE(boot_args.phys_base + boot_args.mem_size))) {
+			if(!IS_IN_RANGE(phys_dst, boot_args.phys_base, trunc_page_kernel(boot_args.phys_base + boot_args.mem_size))) {
 				return KERN_FAILURE;
 			}
-			aes_len = MIN(len, MIN(ARM_PGBYTES - (phys_src & ARM_PGMASK), ARM_PGBYTES - (phys_dst & ARM_PGMASK)));
+			aes_len = MIN(len, MIN(vm_kernel_page_size - (phys_src & vm_kernel_page_mask), vm_kernel_page_size - (phys_dst & vm_kernel_page_mask)));
 			if(aes_ap_v2_cmd(cmd, phys_src, phys_dst, aes_len, opts) != KERN_SUCCESS || mach_vm_machine_attribute(mach_task_self(), virt_dst, aes_len, MATTR_CACHE, &mattr_val) != KERN_SUCCESS) {
 				return KERN_FAILURE;
 			}
@@ -1262,7 +1253,6 @@ main(int argc, char **argv) {
 	if(argc == 2 && str2hex(argv[1], kbag, sizeof(kbag)) != 2 * sizeof(kbag)) {
 		printf("Usage: %s [KBAG]\n", argv[0]);
 	} else if(init_arm_globals() == KERN_SUCCESS) {
-		printf("arm_pgshift: %u\n", arm_pgshift);
 		printf("pmgr_base_off: " KADDR_FMT "\n", pmgr_base_off);
 		printf("aes_ap_base_off: " KADDR_FMT "\n", aes_ap_base_off);
 		printf("pmgr_aes0_ps_off: " KADDR_FMT "\n", pmgr_aes0_ps_off);
