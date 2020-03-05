@@ -1,7 +1,9 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/loader.h>
 #include <mach/mach.h>
+#include <sys/mman.h>
 #include <sys/sysctl.h>
+#include <sys/stat.h>
 
 #define PMGR_SIZE (0x100000)
 #define PROC_TASK_OFF (0x10)
@@ -33,7 +35,7 @@
 #define ARM_PTE_AF (0x400U)
 #define ARM_PTE_NG (0x800U)
 #define PVH_TYPE_MASK (3ULL)
-#define KADDR_FMT "0x%" PRIx64
+#define KADDR_FMT "0x%" PRIX64
 #define VM_KERN_MEMORY_CPU (9)
 #define ARM64_VMADDR_BITS (48U)
 #define ARM_PTE_TYPE_VALID (3U)
@@ -63,9 +65,7 @@
 #define IS_ADR(a) (((a) & 0x9F000000U) == 0x10000000U)
 #define IS_IN_RANGE(a, b, c) ((a) >= (b) && (a) < (c))
 #define IS_ADRP(a) (((a) & 0x9F000000U) == 0x90000000U)
-#define IS_B_EQ(a) (((a) & 0xFF00001FU) == 0x54000000U)
 #define IS_SUB_X(a) (((a) & 0xFFC00000U) == 0xD1000000U)
-#define IS_CBZ_W(a) (((a) & 0xFF000000U) == 0x34000000U)
 #define IS_ADD_X(a) (((a) & 0xFFC00000U) == 0x91000000U)
 #define IS_LDR_X(a) (((a) & 0xFF000000U) == 0x58000000U)
 #define IS_MOV_X(a) (((a) & 0xFFE00000U) == 0xAA000000U)
@@ -103,7 +103,6 @@
 #define AES_KEY_TYPE_GID1 (0x201U)
 #define AES_KEY_TYPE_MASK (0xFFFU)
 #define COMMAND_OPCODE_SHIFT (28U)
-#define AES_KEY_SIZE_BYTES_256 (32)
 #define PMGR_PS_ACTUAL_PS_MASK (15U)
 #define PMGR_PS_MANUAL_PS_MASK (15U)
 #define PMGR_PS_ACTUAL_PS_SHIFT (4U)
@@ -311,31 +310,6 @@ sextract64(uint64_t value, unsigned start, unsigned length) {
 	return (uint64_t)((int64_t)(value << (64U - length - start)) >> (64U - length));
 }
 
-static size_t
-str2hex(const char *str, uint8_t *buf, size_t buf_len) {
-	char l, h = 0;
-	size_t i;
-
-	for(i = 0; i < buf_len << 1U; ++i) {
-		l = str[i];
-		if(l >= '0' && l <= '9') {
-			l -= '0';
-		} else if(l >= 'A' && l <= 'F') {
-			l -= 'A' - 10;
-		} else if(l >= 'a' && l <= 'f') {
-			l -= 'a' - 10;
-		} else {
-			break;
-		}
-		if(i & 1U) {
-			buf[i >> 1U] = (uint8_t)((h << 4U) | l);
-		} else {
-			h = l;
-		}
-	}
-	return i;
-}
-
 static kern_return_t
 init_arm_globals(void) {
 	int cpufamily = CPUFAMILY_UNKNOWN;
@@ -401,7 +375,7 @@ init_tfp0(void) {
 	if(ret != KERN_SUCCESS) {
 		host = mach_host_self();
 		if(MACH_PORT_VALID(host)) {
-			printf("host: 0x%" PRIx32 "\n", host);
+			printf("host: 0x%" PRIX32 "\n", host);
 			ret = host_get_special_port(host, HOST_LOCAL_NODE, 4, &tfp0);
 			mach_port_deallocate(mach_task_self(), host);
 		}
@@ -436,7 +410,7 @@ static void *
 kread_buf_alloc(kaddr_t addr, mach_vm_size_t read_sz) {
 	void *buf = malloc(read_sz);
 
-	if(buf) {
+	if(buf != NULL) {
 		if(kread_buf(addr, buf, read_sz) == KERN_SUCCESS) {
 			return buf;
 		}
@@ -537,10 +511,10 @@ find_section(const struct segment_command_64 *sgp, const char *sect_name) {
 
 static void
 pfinder_reset(pfinder_t *pfinder) {
+	pfinder->pc = 0;
 	pfinder->sec_text = pfinder->sec_cstring = NULL;
 	pfinder->sec_text_start = pfinder->sec_text_sz = 0;
 	pfinder->sec_cstring_start = pfinder->sec_cstring_sz = 0;
-	pfinder->pc = 0;
 }
 
 static kern_return_t
@@ -554,26 +528,26 @@ pfinder_init(pfinder_t *pfinder, kaddr_t kbase, kaddr_t kslide) {
 	void *ptr;
 
 	pfinder_reset(pfinder);
-	if(kread_buf(kbase, &mh64, sizeof(mh64)) == KERN_SUCCESS && mh64.magic == MH_MAGIC_64 && (ptr = kread_buf_alloc(kbase + sizeof(mh64), mh64.sizeofcmds))) {
+	if(kread_buf(kbase, &mh64, sizeof(mh64)) == KERN_SUCCESS && mh64.magic == MH_MAGIC_64 && (ptr = kread_buf_alloc(kbase + sizeof(mh64), mh64.sizeofcmds)) != NULL) {
 		sgp = (const struct segment_command_64 *)ptr;
 		for(i = 0; i < mh64.ncmds; ++i) {
 			if(sgp->cmd == LC_SEGMENT_64) {
-				if(!strncmp(sgp->segname, SEG_TEXT_EXEC, sizeof(sgp->segname)) && (sp = find_section(sgp, SECT_TEXT))) {
+				if(!strncmp(sgp->segname, SEG_TEXT_EXEC, sizeof(sgp->segname)) && (sp = find_section(sgp, SECT_TEXT)) != NULL) {
 					pfinder->sec_text_start = sp->addr;
 					pfinder->sec_text_sz = sp->size;
-					printf("sec_text_start: " KADDR_FMT ", sec_text_sz: 0x%" PRIx64 "\n", pfinder->sec_text_start, pfinder->sec_text_sz);
-				} else if(!strncmp(sgp->segname, SEG_TEXT, sizeof(sgp->segname)) && (sp = find_section(sgp, SECT_CSTRING))) {
+					printf("sec_text_start: " KADDR_FMT ", sec_text_sz: 0x%" PRIX64 "\n", pfinder->sec_text_start, pfinder->sec_text_sz);
+				} else if(!strncmp(sgp->segname, SEG_TEXT, sizeof(sgp->segname)) && (sp = find_section(sgp, SECT_CSTRING)) != NULL) {
 					pfinder->sec_cstring_start = sp->addr;
 					pfinder->sec_cstring_sz = sp->size;
-					printf("sec_cstring_start: " KADDR_FMT ", sec_cstring_sz: 0x%" PRIx64 "\n", pfinder->sec_cstring_start, pfinder->sec_cstring_sz);
+					printf("sec_cstring_start: " KADDR_FMT ", sec_cstring_sz: 0x%" PRIX64 "\n", pfinder->sec_cstring_start, pfinder->sec_cstring_sz);
 				}
 			} else if(sgp->cmd == LC_UNIXTHREAD) {
 				state = (const arm_unified_thread_state_t *)((uintptr_t)sgp + sizeof(struct thread_command));
 				pfinder->pc = state->ts_64.__pc + kslide;
 			}
 			if(pfinder->sec_text_sz && pfinder->sec_cstring_sz && pfinder->pc) {
-				if((pfinder->sec_text = kread_buf_alloc(pfinder->sec_text_start, pfinder->sec_text_sz))) {
-					if((pfinder->sec_cstring = kread_buf_alloc(pfinder->sec_cstring_start, pfinder->sec_cstring_sz))) {
+				if((pfinder->sec_text = kread_buf_alloc(pfinder->sec_text_start, pfinder->sec_text_sz)) != NULL) {
+					if((pfinder->sec_cstring = kread_buf_alloc(pfinder->sec_cstring_start, pfinder->sec_cstring_sz)) != NULL) {
 						ret = KERN_SUCCESS;
 					} else {
 						free(pfinder->sec_text);
@@ -678,23 +652,14 @@ pfinder_pmap_find_phys(pfinder_t pfinder) {
 
 static kaddr_t
 pfinder_pv_head_table_ptr(pfinder_t pfinder) {
-	kaddr_t ref = pfinder_xref_str(pfinder, "\"%s: failed to alloc page for kernel, ret=%d, \" \"pmap=%p, pai=%u, pvepp=%p\"", 0);
+	kaddr_t ref = pfinder_xref_str(pfinder, "pmap_iommu_ioctl_internal", 8);
 	const uint32_t *insn = pfinder.sec_text;
 	size_t i;
 
 	if(ref) {
 		for(i = (ref - pfinder.sec_text_start) / sizeof(*insn); i > 0; --i) {
-			if(IS_B_EQ(insn[i]) && IS_ADRP(insn[i + 1]) && IS_LDR_X_UNSIGNED_IMM(insn[i + 2])) {
-				return pfinder_xref_rd(pfinder, RD(insn[i + 2]), pfinder.sec_text_start + (i * sizeof(*insn)), 0);
-			}
-		}
-	} else {
-		ref = pfinder_xref_str(pfinder, "\"pmap_batch_set_cache_attributes(): pn 0x%08x not managed\"", 0);
-		if(ref) {
-			for(i = (ref - pfinder.sec_text_start) / sizeof(*insn); i < (pfinder.sec_text_sz / sizeof(*insn)) - 2; ++i) {
-				if(IS_CBZ_W(insn[i]) && IS_ADRP(insn[i + 1]) && IS_LDR_X_UNSIGNED_IMM(insn[i + 2])) {
-					return pfinder_xref_rd(pfinder, RD(insn[i + 1]), pfinder.sec_text_start + (i * sizeof(*insn)), 0);
-				}
+			if(IS_ADRP(insn[i]) && IS_LDR_X_UNSIGNED_IMM(insn[i + 1]) && IS_MOV_X(insn[i + 2]) && RD(insn[i + 2]) == 0) {
+				return pfinder_xref_rd(pfinder, RD(insn[i + 1]), pfinder.sec_text_start + (i * sizeof(*insn)), 0);
 			}
 		}
 	}
@@ -789,7 +754,7 @@ get_conn(const char *name) {
 	io_connect_t conn = IO_OBJECT_NULL;
 
 	if(MACH_PORT_VALID(serv)) {
-		printf("serv: 0x%" PRIx32 "\n", serv);
+		printf("serv: 0x%" PRIX32 "\n", serv);
 		if(IOServiceOpen(serv, mach_task_self(), 0, &conn) != KERN_SUCCESS || !MACH_PORT_VALID(conn)) {
 			conn = IO_OBJECT_NULL;
 		}
@@ -826,7 +791,7 @@ kcall_init(void) {
 	kaddr_t our_task, ipc_port;
 
 	if((g_conn = get_conn("AppleKeyStore")) != IO_OBJECT_NULL) {
-		printf("g_conn: 0x%" PRIx32 "\n", g_conn);
+		printf("g_conn: 0x%" PRIX32 "\n", g_conn);
 		if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
 			printf("our_task: " KADDR_FMT "\n", our_task);
 			if((ipc_port = get_port(our_task, g_conn))) {
@@ -889,7 +854,7 @@ phys_init(void) {
 				if(kread_addr(our_task + TASK_MAP_OFF, &our_map) == KERN_SUCCESS) {
 					printf("our_map: " KADDR_FMT "\n", our_map);
 					if(kread_buf(our_map + VM_MAP_FLAGS_OFF, &flags, sizeof(flags)) == KERN_SUCCESS) {
-						printf("flags: 0x%08" PRIx32 "\n", flags);
+						printf("flags: 0x%08" PRIX32 "\n", flags);
 						flags |= VM_MAP_FLAGS_NO_ZERO_FILL;
 						if(kwrite_buf(our_map + VM_MAP_FLAGS_OFF, &flags, sizeof(flags)) == KERN_SUCCESS) {
 							if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
@@ -1066,9 +1031,9 @@ aes_ap_v1_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opt
 	}
 	rPMGR_AES0_PS |= PMGR_PS_RUN_MAX;
 	while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
-	printf("old_iv: 0x%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "\n", rAES_AP_IV_IN0, rAES_AP_IV_IN1, rAES_AP_IV_IN2, rAES_AP_IV_IN3);
-	printf("old_in: 0x%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "\n", rAES_AP_TXT_IN0, rAES_AP_TXT_IN1, rAES_AP_TXT_IN2, rAES_AP_TXT_IN3);
-	printf("old_out: 0x%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "\n", rAES_AP_TXT_OUT0, rAES_AP_TXT_OUT1, rAES_AP_TXT_OUT2, rAES_AP_TXT_OUT3);
+	printf("old_iv: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", rAES_AP_IV_IN0, rAES_AP_IV_IN1, rAES_AP_IV_IN2, rAES_AP_IV_IN3);
+	printf("old_in: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", rAES_AP_TXT_IN0, rAES_AP_TXT_IN1, rAES_AP_TXT_IN2, rAES_AP_TXT_IN3);
+	printf("old_out: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", rAES_AP_TXT_OUT0, rAES_AP_TXT_OUT1, rAES_AP_TXT_OUT2, rAES_AP_TXT_OUT3);
 	rAES_AP_KEY_IN_CTRL = key_in_ctrl | KEY_IN_CTRL_VAL_SET;
 	rAES_AP_IV_IN0 = rAES_AP_IV_IN1 = rAES_AP_IV_IN2 = rAES_AP_IV_IN3 = 0;
 	rAES_AP_IV_IN_CTRL = IV_IN_CTRL_VAL_SET;
@@ -1175,7 +1140,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 	while(!(rAES_INT_STATUS & AES_BLK_INT_STATUS_FLAG_COMMAND_UMASK)) {}
 	rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_COMMAND_UMASK;
 	if(rAES_INT_STATUS) {
-		printf("AES_STATUS: 0x%" PRIx32 ", AES_COMMAND_FIFO_STATUS: 0x%" PRIx32 ", AES_INT_STATUS: 0x%" PRIx32 "\n", rAES_STATUS, rAES_COMMAND_FIFO_STATUS, rAES_INT_STATUS);
+		printf("AES_STATUS: 0x%" PRIX32 ", AES_COMMAND_FIFO_STATUS: 0x%" PRIX32 ", AES_INT_STATUS: 0x%" PRIX32 "\n", rAES_STATUS, rAES_COMMAND_FIFO_STATUS, rAES_INT_STATUS);
 	}
 	rAES_CONTROL = AES_BLK_CONTROL_STOP_UMASK;
 	if(pmgr_aes0_ps_off != 0x80240) {
@@ -1229,9 +1194,52 @@ aes_ap_test(void) {
 
 	for(i = 0; i < sizeof(uid_key_seeds) / sizeof(uid_key_seeds[0]); ++i) {
 		if(aes_ap_cmd(AES_CMD_CBC | AES_CMD_ENC, uid_key_seeds[i].key, uid_key_seeds[i].val, sizeof(uid_key_seeds[i].key), AES_KEY_SIZE_256 | AES_KEY_TYPE_UID0) == KERN_SUCCESS) {
-			printf("key_id: 0x%" PRIx32 ", val: 0x%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "\n", uid_key_seeds[i].key_id, uid_key_seeds[i].val[0], uid_key_seeds[i].val[1], uid_key_seeds[i].val[2], uid_key_seeds[i].val[3]);
+			printf("key_id: 0x%" PRIX32 ", val: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", uid_key_seeds[i].key_id, uid_key_seeds[i].val[0], uid_key_seeds[i].val[1], uid_key_seeds[i].val[2], uid_key_seeds[i].val[3]);
 		}
 	}
+}
+
+static kern_return_t
+aes_ap_file(const char *dir, const char *key_type, const char *in_filename, const char *out_filename) {
+	uint32_t cmd = AES_CMD_CBC, opts = AES_KEY_SIZE_256;
+	kern_return_t ret = KERN_FAILURE;
+	struct stat stat_buf;
+	int in_fd, out_fd;
+	size_t len;
+	void *buf;
+
+	if(!strcmp(dir, "enc")) {
+		cmd |= AES_CMD_ENC;
+	} else if(!strcmp(dir, "dec")) {
+		cmd |= AES_CMD_DEC;
+	} else {
+		return ret;
+	}
+	if(!strcmp(key_type, "UID0")) {
+		opts |= AES_KEY_TYPE_UID0;
+	} else if(!strcmp(key_type, "GID0")) {
+		opts |= AES_KEY_TYPE_GID0;
+	} else if(!strcmp(key_type, "GID1")) {
+		opts |= AES_KEY_TYPE_GID1;
+	} else {
+		return ret;
+	}
+	if((in_fd = open(in_filename, O_RDONLY | O_CLOEXEC)) != -1) {
+		if(fstat(in_fd, &stat_buf) != -1 && stat_buf.st_size > 0) {
+			len = (size_t)stat_buf.st_size;
+			if(!(len % AES_BLOCK_SIZE) && (buf = malloc(len)) != NULL) {
+				if(read(in_fd, buf, len) != -1 && aes_ap_cmd(cmd, buf, buf, len, opts) == KERN_SUCCESS && (out_fd = open(out_filename, O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, S_IROTH | S_IRGRP | S_IWUSR | S_IRUSR)) != -1) {
+					if(write(out_fd, buf, len) != -1) {
+						ret = KERN_SUCCESS;
+					}
+					close(out_fd);
+				}
+				free(buf);
+			}
+		}
+		close(in_fd);
+	}
+	return ret;
 }
 
 static void
@@ -1244,36 +1252,28 @@ aes_ap_term(void) {
 
 int
 main(int argc, char **argv) {
-	uint8_t kbag[AES_BLOCK_SIZE + AES_KEY_SIZE_BYTES_256];
 	kaddr_t kbase, kslide;
 	kern_return_t ret;
 	pfinder_t pfinder;
-	size_t i;
 
-	if(argc == 2 && str2hex(argv[1], kbag, sizeof(kbag)) != 2 * sizeof(kbag)) {
-		printf("Usage: %s [KBAG]\n", argv[0]);
+	if(IS_IN_RANGE(argc, 2, 5)) {
+		printf("Usage: %s [enc/dec UID0/GID0/GID1 in out]\n", argv[0]);
 	} else if(init_arm_globals() == KERN_SUCCESS) {
 		printf("pmgr_base_off: " KADDR_FMT "\n", pmgr_base_off);
 		printf("aes_ap_base_off: " KADDR_FMT "\n", aes_ap_base_off);
 		printf("pmgr_aes0_ps_off: " KADDR_FMT "\n", pmgr_aes0_ps_off);
 		if(init_tfp0() == KERN_SUCCESS) {
-			printf("tfp0: 0x%" PRIx32 "\n", tfp0);
+			printf("tfp0: 0x%" PRIX32 "\n", tfp0);
 			if((kbase = get_kbase(&kslide))) {
 				printf("kbase: " KADDR_FMT "\n", kbase);
 				printf("kslide: " KADDR_FMT "\n", kslide);
 				if(pfinder_init(&pfinder, kbase, kslide) == KERN_SUCCESS) {
 					if(pfinder_init_offsets(pfinder) == KERN_SUCCESS && kcall_init() == KERN_SUCCESS) {
 						if(kcall(&ret, csblob_get_cdhash, 1, USER_CLIENT_TRAP_OFF) == KERN_SUCCESS) {
-							printf("csblob_get_cdhash(USER_CLIENT_TRAP_OFF): 0x%" PRIx32 "\n", ret);
+							printf("csblob_get_cdhash(USER_CLIENT_TRAP_OFF): 0x%" PRIX32 "\n", ret);
 							if(phys_init() == KERN_SUCCESS && aes_ap_init() == KERN_SUCCESS) {
-								if(argc == 2) {
-									if(aes_ap_cmd(AES_CMD_CBC | AES_CMD_DEC, kbag, kbag, sizeof(kbag), AES_KEY_SIZE_256 | AES_KEY_TYPE_GID0) == KERN_SUCCESS) {
-										printf("kbag_dec: ");
-										for(i = 0; i < sizeof(kbag); ++i) {
-											printf("%02" PRIx8, kbag[i]);
-										}
-										putchar('\n');
-									}
+								if(argc == 5) {
+									printf("aes_ap_file: 0x%" PRIX32 "\n", aes_ap_file(argv[1], argv[2], argv[3], argv[4]));
 								} else {
 									aes_ap_test();
 								}

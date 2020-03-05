@@ -18,7 +18,7 @@
 #define PROC_P_PID_OFF (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b2 ? 0x68 : 0x60)
 #define TASK_ITK_REGISTERED_OFF (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b1 ? 0x308 : 0x2E8)
 
-#define KADDR_FMT "0x%" PRIx64
+#define KADDR_FMT "0x%" PRIX64
 #define VM_KERN_MEMORY_CPU (9)
 #define RD(a) extract32(a, 0, 5)
 #define RN(a) extract32(a, 5, 5)
@@ -110,7 +110,7 @@ init_tfp0(void) {
 	if(ret != KERN_SUCCESS) {
 		host = mach_host_self();
 		if(MACH_PORT_VALID(host)) {
-			printf("host: 0x%" PRIx32 "\n", host);
+			printf("host: 0x%" PRIX32 "\n", host);
 			ret = host_get_special_port(host, HOST_LOCAL_NODE, 4, &tfp0);
 			mach_port_deallocate(mach_task_self(), host);
 		}
@@ -145,7 +145,7 @@ static void *
 kread_buf_alloc(kaddr_t addr, mach_vm_size_t read_sz) {
 	void *buf = malloc(read_sz);
 
-	if(buf) {
+	if(buf != NULL) {
 		if(kread_buf(addr, buf, read_sz) == KERN_SUCCESS) {
 			return buf;
 		}
@@ -232,19 +232,19 @@ pfinder_init(pfinder_t *pfinder, kaddr_t kbase) {
 		sgp = (const struct segment_command_64 *)ptr;
 		for(i = 0; i < mh64.ncmds; ++i) {
 			if(sgp->cmd == LC_SEGMENT_64) {
-				if(!strncmp(sgp->segname, SEG_TEXT_EXEC, sizeof(sgp->segname)) && (sp = find_section(sgp, SECT_TEXT))) {
+				if(!strncmp(sgp->segname, SEG_TEXT_EXEC, sizeof(sgp->segname)) && (sp = find_section(sgp, SECT_TEXT)) != NULL) {
 					pfinder->sec_text_start = sp->addr;
 					pfinder->sec_text_sz = sp->size;
-					printf("sec_text_start: " KADDR_FMT ", sec_text_sz: 0x%" PRIx64 "\n", pfinder->sec_text_start, pfinder->sec_text_sz);
-				} else if(!strncmp(sgp->segname, SEG_TEXT, sizeof(sgp->segname)) && (sp = find_section(sgp, SECT_CSTRING))) {
+					printf("sec_text_start: " KADDR_FMT ", sec_text_sz: 0x%" PRIX64 "\n", pfinder->sec_text_start, pfinder->sec_text_sz);
+				} else if(!strncmp(sgp->segname, SEG_TEXT, sizeof(sgp->segname)) && (sp = find_section(sgp, SECT_CSTRING)) != NULL) {
 					pfinder->sec_cstring_start = sp->addr;
 					pfinder->sec_cstring_sz = sp->size;
-					printf("sec_cstring_start: " KADDR_FMT ", sec_cstring_sz: 0x%" PRIx64 "\n", pfinder->sec_cstring_start, pfinder->sec_cstring_sz);
+					printf("sec_cstring_start: " KADDR_FMT ", sec_cstring_sz: 0x%" PRIX64 "\n", pfinder->sec_cstring_start, pfinder->sec_cstring_sz);
 				}
 			}
 			if(pfinder->sec_text_sz && pfinder->sec_cstring_sz) {
-				if((pfinder->sec_text = kread_buf_alloc(pfinder->sec_text_start, pfinder->sec_text_sz))) {
-					if((pfinder->sec_cstring = kread_buf_alloc(pfinder->sec_cstring_start, pfinder->sec_cstring_sz))) {
+				if((pfinder->sec_text = kread_buf_alloc(pfinder->sec_text_start, pfinder->sec_text_sz)) != NULL) {
+					if((pfinder->sec_cstring = kread_buf_alloc(pfinder->sec_cstring_start, pfinder->sec_cstring_sz)) != NULL) {
 						ret = KERN_SUCCESS;
 					} else {
 						free(pfinder->sec_text);
@@ -368,7 +368,7 @@ key_dumper(void) {
 	uint32_t i, key_cnt;
 
 	if(serv != IO_OBJECT_NULL) {
-		printf("serv: 0x%" PRIx32 "\n", serv);
+		printf("serv: 0x%" PRIX32 "\n", serv);
 		if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
 			printf("our_task: " KADDR_FMT "\n", our_task);
 			if((ipc_port = get_port(our_task, serv))) {
@@ -376,12 +376,12 @@ key_dumper(void) {
 				if(kread_addr(ipc_port + IPC_PORT_IP_KOBJECT_OFF, &object) == KERN_SUCCESS) {
 					printf("object: " KADDR_FMT "\n", object);
 					if(kread_buf(object + IO_AES_ACCELERATOR_SPECIAL_KEY_CNT_OFF, &key_cnt, sizeof(key_cnt)) == KERN_SUCCESS && key_cnt) {
-						printf("key_cnt: 0x%" PRIx32 "\n", key_cnt);
+						printf("key_cnt: 0x%" PRIX32 "\n", key_cnt);
 						if(kread_addr(object + IO_AES_ACCELERATOR_SPECIAL_KEYS_OFF, &keys_ptr) == KERN_SUCCESS) {
 							printf("keys_ptr: " KADDR_FMT "\n", keys_ptr);
-							if((keys = kread_buf_alloc(keys_ptr, key_cnt * sizeof(*keys)))) {
+							if((keys = kread_buf_alloc(keys_ptr, key_cnt * sizeof(*keys))) != NULL) {
 								for(i = 0; i < key_cnt; ++i) {
-									printf("generated: 0x%" PRIx32 ", key_id: 0x%" PRIx32 ", key_size: 0x%" PRIx32 ", val: 0x%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "\n", keys[i].generated, keys[i].key_id, keys[i].key_size, keys[i].val[0], keys[i].val[1], keys[i].val[2], keys[i].val[3]);
+									printf("generated: 0x%" PRIX32 ", key_id: 0x%" PRIX32 ", key_size: 0x%" PRIX32 ", val: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", keys[i].generated, keys[i].key_id, keys[i].key_size, keys[i].val[0], keys[i].val[1], keys[i].val[2], keys[i].val[3]);
 								}
 								free(keys);
 							}
@@ -400,7 +400,7 @@ main(void) {
 	pfinder_t pfinder;
 
 	if(init_tfp0() == KERN_SUCCESS) {
-		printf("tfp0: 0x%" PRIx32 "\n", tfp0);
+		printf("tfp0: 0x%" PRIX32 "\n", tfp0);
 		if((kbase = get_kbase(&kslide))) {
 			printf("kbase: " KADDR_FMT "\n", kbase);
 			printf("kslide: " KADDR_FMT "\n", kslide);
