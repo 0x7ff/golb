@@ -1,12 +1,12 @@
-.PHONY: all golb key_dumper clean
+.PHONY: all aes_ap key_dumper clean
 
-all: golb key_dumper
+all: aes_ap key_dumper
 
-golb:
-	xcrun -sdk iphoneos clang -arch arm64 -Weverything golb.c -o golb -framework IOKit -framework CoreFoundation -O2
+aes_ap:
+	xcrun -sdk iphoneos clang -arch arm64 -Weverything golb.c aes_ap.c -o aes_ap -framework CoreFoundation -O2
 
 key_dumper:
 	xcrun -sdk iphoneos clang -arch arm64 -arch arm64e -Weverything key_dumper.c -o key_dumper -framework IOKit -framework CoreFoundation -O2
 
 clean:
-	$(RM) golb key_dumper
+	$(RM) aes_ap key_dumper

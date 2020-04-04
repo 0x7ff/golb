@@ -1,6 +1,5 @@
-#include <CoreFoundation/CoreFoundation.h>
+#include "common.h"
 #include <mach-o/loader.h>
-#include <mach/mach.h>
 
 #define PROC_TASK_OFF (0x10)
 #define IPC_PORT_IP_KOBJECT_OFF (0x68)
@@ -17,7 +16,6 @@
 #define PROC_P_PID_OFF (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b2 ? 0x68 : 0x60)
 #define TASK_ITK_REGISTERED_OFF (kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b1 ? 0x308 : 0x2E8)
 
-#define KADDR_FMT "0x%" PRIX64
 #define VM_KERN_MEMORY_CPU (9)
 #define RD(a) extract32(a, 0, 5)
 #define RN(a) extract32(a, 5, 5)
@@ -47,7 +45,6 @@
 #	define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
-typedef uint64_t kaddr_t;
 typedef mach_port_t io_object_t;
 typedef io_object_t io_service_t;
 
@@ -72,12 +69,6 @@ IOServiceMatching(const char *);
 
 io_service_t
 IOServiceGetMatchingService(mach_port_t, CFDictionaryRef);
-
-kern_return_t
-mach_vm_read_overwrite(vm_map_t, mach_vm_address_t, mach_vm_size_t, mach_vm_address_t, mach_vm_size_t *);
-
-kern_return_t
-mach_vm_region(vm_map_t, mach_vm_address_t *, mach_vm_size_t *, vm_region_flavor_t, vm_region_info_t, mach_msg_type_number_t *, mach_port_t *);
 
 extern const mach_port_t kIOMasterPortDefault;
 
@@ -301,12 +292,11 @@ pfinder_xref_rd(pfinder_t pfinder, uint32_t rd, kaddr_t start, kaddr_t to) {
 			memset(x, '\0', sizeof(x));
 		}
 		if(RD(insn) == rd) {
-			if(to != 0) {
-				if(x[rd] == to) {
-					return start;
-				}
-			} else {
+			if(to == 0) {
 				return x[rd];
+			}
+			if(x[rd] == to) {
+				return start;
 			}
 		}
 	}
