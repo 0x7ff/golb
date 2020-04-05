@@ -1,5 +1,6 @@
 #include "golb.h"
 #include <mach-o/loader.h>
+#include <sys/sysctl.h>
 
 #define PROC_TASK_OFF (0x10)
 #define VM_MAP_PMAP_OFF (0x48)
@@ -25,6 +26,8 @@
 #define ARM_PTE_AF (0x400U)
 #define ARM_PTE_NG (0x800U)
 #define PVH_TYPE_MASK (3ULL)
+#define ARM_PGSHIFT_4K (12U)
+#define ARM_PGSHIFT_16K (14U)
 #define VM_KERN_MEMORY_CPU (9)
 #define ARM64_VMADDR_BITS (48U)
 #define ARM_PTE_TYPE_VALID (3U)
@@ -39,7 +42,9 @@
 #define ADRP_ADDR(a) ((a) & ~0xFFFULL)
 #define PVH_LIST_MASK (~PVH_TYPE_MASK)
 #define VM_MAP_FLAGS_NO_ZERO_FILL (4U)
+#define ARM_PGMASK (ARM_PGBYTES - 1ULL)
 #define ADRP_IMM(a) (ADR_IMM(a) << 12U)
+#define ARM_PGBYTES (1U << arm_pgshift)
 #define PVH_FLAG_LOCKDOWN (1ULL << 59U)
 #define ARM_PTE_ATTRINDX(a) ((a) << 2U)
 #define ARM_PTE_NX (0x40000000000000ULL)
@@ -56,8 +61,8 @@
 #define IS_MOV_X(a) (((a) & 0xFFE00000U) == 0xAA000000U)
 #define LDR_X_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 3U)
 #define IS_LDR_X_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xF9400000U)
+#define ARM_PTE_MASK (((1ULL << ARM64_VMADDR_BITS) - 1) & ~ARM_PGMASK)
 #define ADR_IMM(a) ((sextract64(a, 5, 19) << 2U) | extract32(a, 29, 2))
-#define ARM_PTE_MASK trunc_page_kernel((1ULL << ARM64_VMADDR_BITS) - 1)
 #define PVH_HIGH_FLAGS (PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN)
 
 #ifndef SEG_TEXT_EXEC
@@ -111,6 +116,7 @@ typedef struct {
 } lowglo_t;
 
 static lowglo_t lowglo;
+static unsigned arm_pgshift;
 static boot_args_t boot_args;
 static task_t tfp0 = MACH_PORT_NULL;
 static kaddr_t allproc, const_boot_args, pv_head_table_ptr, pv_head_table, our_map, our_pmap;
@@ -123,6 +129,29 @@ extract32(uint32_t val, unsigned start, unsigned len) {
 static uint64_t
 sextract64(uint64_t val, unsigned start, unsigned len) {
 	return (uint64_t)((int64_t)(val << (64U - len - start)) >> (64U - len));
+}
+
+static kern_return_t
+init_arm_pgshift(void) {
+	int cpufamily = CPUFAMILY_UNKNOWN;
+	size_t len = sizeof(cpufamily);
+
+	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0) {
+		switch(cpufamily) {
+			case CPUFAMILY_ARM_CYCLONE:
+			case CPUFAMILY_ARM_TYPHOON:
+				arm_pgshift = ARM_PGSHIFT_4K;
+				return KERN_SUCCESS;
+			case CPUFAMILY_ARM_TWISTER:
+			case CPUFAMILY_ARM_HURRICANE:
+			case CPUFAMILY_ARM_MONSOON_MISTRAL:
+				arm_pgshift = ARM_PGSHIFT_16K;
+				return KERN_SUCCESS;
+			default:
+				break;
+		}
+	}
+	return KERN_FAILURE;
 }
 
 static kern_return_t
@@ -521,32 +550,37 @@ golb_init(void) {
 	kaddr_t kbase, kslide, our_task;
 	uint32_t flags;
 
-	if(init_tfp0() == KERN_SUCCESS) {
-		printf("tfp0: 0x%" PRIX32 "\n", tfp0);
-		if((kbase = get_kbase(&kslide))) {
-			printf("kbase: " KADDR_FMT ", kslide: " KADDR_FMT "\n", kbase, kslide);
-			if(pfinder_init_offsets(kbase, kslide) == KERN_SUCCESS && kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS) {
-				printf("pv_head_table: " KADDR_FMT "\n", pv_head_table);
-				if(kread_buf(const_boot_args, &boot_args, sizeof(boot_args)) == KERN_SUCCESS) {
-					printf("virt_base: " KADDR_FMT ", phys_base: " KADDR_FMT ", mem_sz: 0x%" PRIX64 "\n", boot_args.virt_base, boot_args.phys_base, boot_args.mem_sz);
-					if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
-						printf("our_task: " KADDR_FMT "\n", our_task);
-						if(kread_addr(our_task + TASK_MAP_OFF, &our_map) == KERN_SUCCESS) {
-							printf("our_map: " KADDR_FMT "\n", our_map);
-							if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
-								printf("our_pmap: " KADDR_FMT "\n", our_pmap);
-								if(kread_buf(our_map + VM_MAP_FLAGS_OFF, &flags, sizeof(flags)) == KERN_SUCCESS) {
-									printf("flags: 0x%" PRIX32 "\n", flags);
-									flags |= VM_MAP_FLAGS_NO_ZERO_FILL;
-									return kwrite_buf(our_map + VM_MAP_FLAGS_OFF, &flags, sizeof(flags));
+	if(init_arm_pgshift() == KERN_SUCCESS) {
+		printf("arm_pgshift: %u\n", arm_pgshift);
+		if(init_tfp0() == KERN_SUCCESS) {
+			printf("tfp0: 0x%" PRIX32 "\n", tfp0);
+			if((kbase = get_kbase(&kslide))) {
+				printf("kbase: " KADDR_FMT ", kslide: " KADDR_FMT "\n", kbase, kslide);
+				if(pfinder_init_offsets(kbase, kslide) == KERN_SUCCESS && kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS) {
+					printf("pv_head_table: " KADDR_FMT "\n", pv_head_table);
+					if(kread_buf(const_boot_args, &boot_args, sizeof(boot_args)) == KERN_SUCCESS) {
+						printf("virt_base: " KADDR_FMT ", phys_base: " KADDR_FMT ", mem_sz: 0x%" PRIX64 "\n", boot_args.virt_base, boot_args.phys_base, boot_args.mem_sz);
+						if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
+							printf("our_task: " KADDR_FMT "\n", our_task);
+							if(kread_addr(our_task + TASK_MAP_OFF, &our_map) == KERN_SUCCESS) {
+								printf("our_map: " KADDR_FMT "\n", our_map);
+								if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
+									printf("our_pmap: " KADDR_FMT "\n", our_pmap);
+									if(kread_buf(our_map + VM_MAP_FLAGS_OFF, &flags, sizeof(flags)) == KERN_SUCCESS) {
+										printf("flags: 0x%" PRIX32 "\n", flags);
+										flags |= VM_MAP_FLAGS_NO_ZERO_FILL;
+										if(kwrite_buf(our_map + VM_MAP_FLAGS_OFF, &flags, sizeof(flags)) == KERN_SUCCESS) {
+											return KERN_SUCCESS;
+										}
+									}
 								}
 							}
 						}
 					}
 				}
 			}
+			mach_port_deallocate(mach_task_self(), tfp0);
 		}
-		mach_port_deallocate(mach_task_self(), tfp0);
 	}
 	return KERN_FAILURE;
 }
@@ -572,9 +606,9 @@ golb_find_phys(kaddr_t virt) {
 
 	virt -= virt_off;
 	if(vm_map_lookup_entry(our_map, virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && vm_entry.vme_offset == 0 && kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) == KERN_SUCCESS) {
-		while((vm_page = vm_page_unpack_ptr(m.vmp_listq.next)) != 0 && vm_page != vm_entry.vme_object) {
+		while((vm_page = vm_page_unpack_ptr(m.vmp_listq.next)) != 0) {
 			printf("vm_page: " KADDR_FMT "\n", vm_page);
-			if(kread_buf(vm_page, &m, sizeof(m)) != KERN_SUCCESS) {
+			if(vm_page == vm_entry.vme_object || kread_buf(vm_page, &m, sizeof(m)) != KERN_SUCCESS) {
 				break;
 			}
 			printf("vmp_offset: 0x%" PRIX64 ", vmp_object: 0x%" PRIX32 "\n", m.vmp_offset, m.vmp_object);
@@ -599,7 +633,7 @@ golb_unmap(golb_ctx_t ctx) {
 
 kern_return_t
 golb_map(golb_ctx_t *ctx, kaddr_t virt, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
-	kaddr_t phys_off, vm_page, vphys, pv_h, ptep, orig_pte, fake_pte;
+	kaddr_t phys_off, vm_page, vphys = 0, pv_h, ptep = 0, orig_pte, fake_pte;
 	mach_vm_offset_t map_off;
 	vm_map_entry_t vm_entry;
 	vm_page_t m;
@@ -612,34 +646,39 @@ golb_map(golb_ctx_t *ctx, kaddr_t virt, kaddr_t phys, mach_vm_size_t sz, vm_prot
 		return KERN_FAILURE;
 	}
 	phys -= phys_off;
-	for(map_off = 0; map_off < sz; map_off += vm_kernel_page_size) {
+	for(map_off = 0; map_off < sz; map_off += ARM_PGBYTES) {
 		*(volatile kaddr_t *)(virt + map_off) = FAULT_MAGIC;
 	}
-	if(vm_map_lookup_entry(our_map, virt, &vm_entry) != KERN_SUCCESS || vm_entry.vme_object == 0 || vm_entry.vme_offset != 0 || (vm_entry.links.end - virt) < sz || kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) != KERN_SUCCESS || (ctx->orig = calloc(sz >> vm_kernel_page_shift, sizeof(ctx->orig[0]))) == NULL) {
+	if(vm_map_lookup_entry(our_map, virt, &vm_entry) != KERN_SUCCESS || vm_entry.vme_object == 0 || vm_entry.vme_offset != 0 || (vm_entry.links.end - virt) < sz || kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) != KERN_SUCCESS || (ctx->orig = calloc(sz >> arm_pgshift, sizeof(ctx->orig[0]))) == NULL) {
 		return KERN_FAILURE;
 	}
 	ctx->orig_cnt = 0;
-	for(map_off = 0; map_off < sz; map_off += vm_kernel_page_size) {
-		if((vm_page = vm_page_unpack_ptr(m.vmp_listq.next)) == 0) {
-			break;
+	for(map_off = 0; map_off < sz; map_off += ARM_PGBYTES) {
+		if((map_off & vm_kernel_page_mask) == 0) {
+			if((vm_page = vm_page_unpack_ptr(m.vmp_listq.next)) == 0) {
+				break;
+			}
+			printf("vm_page: " KADDR_FMT "\n", vm_page);
+			if(vm_page == vm_entry.vme_object || kread_buf(vm_page, &m, sizeof(m)) != KERN_SUCCESS) {
+				break;
+			}
+			printf("vmp_offset: 0x%" PRIX64 ", vmp_object: 0x%" PRIX32 "\n", m.vmp_offset, m.vmp_object);
+			if(m.vmp_offset != map_off + (virt - vm_entry.links.start) || vm_page_unpack_ptr(m.vmp_object) != vm_entry.vme_object || (vphys = vm_page_get_phys_addr(vm_page)) == 0) {
+				break;
+			}
+			printf("vphys: " KADDR_FMT "\n", vphys);
+			if(vphys < boot_args.phys_base || vphys >= trunc_page_kernel(boot_args.phys_base + boot_args.mem_sz) || kread_addr(pv_head_table + ((vphys - boot_args.phys_base) >> vm_kernel_page_shift) * sizeof(kaddr_t), &pv_h) != KERN_SUCCESS) {
+				break;
+			}
+			printf("pv_h: " KADDR_FMT "\n", pv_h);
+			if((pv_h & PVH_TYPE_MASK) != PVH_TYPE_PTEP) {
+				break;
+			}
+			ptep = (pv_h & PVH_LIST_MASK) | PVH_HIGH_FLAGS;
+		} else {
+			vphys += ARM_PGBYTES;
+			ptep += sizeof(kaddr_t);
 		}
-		printf("vm_page: " KADDR_FMT "\n", vm_page);
-		if(vm_page == vm_entry.vme_object || kread_buf(vm_page, &m, sizeof(m)) != KERN_SUCCESS) {
-			break;
-		}
-		printf("vmp_offset: 0x%" PRIX64 ", vmp_object: 0x%" PRIX32 "\n", m.vmp_offset, m.vmp_object);
-		if(m.vmp_offset != map_off + (virt - vm_entry.links.start) || vm_page_unpack_ptr(m.vmp_object) != vm_entry.vme_object || (vphys = vm_page_get_phys_addr(vm_page)) == 0) {
-			break;
-		}
-		printf("vphys: " KADDR_FMT "\n", vphys);
-		if(vphys < boot_args.phys_base || vphys >= trunc_page_kernel(boot_args.phys_base + boot_args.mem_sz) || kread_addr(pv_head_table + ((vphys - boot_args.phys_base) >> vm_kernel_page_shift) * sizeof(kaddr_t), &pv_h) != KERN_SUCCESS) {
-			break;
-		}
-		printf("pv_h: " KADDR_FMT "\n", pv_h);
-		if((pv_h & PVH_TYPE_MASK) != PVH_TYPE_PTEP) {
-			break;
-		}
-		ptep = (pv_h & PVH_LIST_MASK) | PVH_HIGH_FLAGS;
 		printf("ptep: " KADDR_FMT "\n", ptep);
 		if(kread_addr(ptep, &orig_pte) != KERN_SUCCESS) {
 			break;
