@@ -260,19 +260,6 @@ kread_buf(kaddr_t addr, void *buf, mach_vm_size_t sz) {
 	return KERN_SUCCESS;
 }
 
-static void *
-kread_buf_alloc(kaddr_t addr, mach_vm_size_t read_sz) {
-	void *buf = malloc(read_sz);
-
-	if(buf != NULL) {
-		if(kread_buf(addr, buf, read_sz) == KERN_SUCCESS) {
-			return buf;
-		}
-		free(buf);
-	}
-	return NULL;
-}
-
 static kern_return_t
 kread_addr(kaddr_t addr, kaddr_t *val) {
 	return kread_buf(addr, val, sizeof(*val));
@@ -496,7 +483,7 @@ pfinder_rtclock_data(pfinder_t pfinder) {
 	for(ref = pfinder_xref_str(pfinder, "assert_wait_timeout_with_leeway", 8); ref >= pfinder.sec_text.s64.addr && ref - pfinder.sec_text.s64.addr <= pfinder.sec_text.s64.size - sizeof(insns); ref -= sizeof(*insns)) {
 		memcpy(insns, pfinder.sec_text.data + (ref - pfinder.sec_text.s64.addr), sizeof(insns));
 		if(IS_ADRP(insns[0]) && IS_NOP(insns[1]) && IS_LDR_W_UNSIGNED_IMM(insns[2])) {
-			return pfinder_xref_rd(pfinder, RD(insns[0]), ref, 0);
+			return pfinder_xref_rd(pfinder, RD(insns[2]), ref, 0);
 		}
 	}
 	return 0;
@@ -651,9 +638,9 @@ key_dumper(void) {
 	io_service_t serv = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching("IOAESAccelerator"));
 	struct {
 		uint32_t generated, key_id, key_sz, val[4], key[4], zero, pad;
-	} *keys;
+	} key;
 	kaddr_t object, keys_ptr;
-	uint32_t i, key_cnt;
+	uint32_t key_cnt;
 
 	if(serv != IO_OBJECT_NULL) {
 		printf("serv: 0x%" PRIX32 "\n", serv);
@@ -661,15 +648,12 @@ key_dumper(void) {
 			printf("our_task: " KADDR_FMT "\n", our_task);
 			if(lookup_io_object(serv, &object) == KERN_SUCCESS) {
 				printf("object: " KADDR_FMT "\n", object);
-				if(kread_buf(object + IO_AES_ACCELERATOR_SPECIAL_KEY_CNT_OFF, &key_cnt, sizeof(key_cnt)) == KERN_SUCCESS && key_cnt != 0) {
-					printf("key_cnt: 0x%" PRIX32 "\n", key_cnt);
-					if(kread_addr(object + IO_AES_ACCELERATOR_SPECIAL_KEYS_OFF, &keys_ptr) == KERN_SUCCESS) {
-						printf("keys_ptr: " KADDR_FMT "\n", keys_ptr);
-						if((keys = kread_buf_alloc(keys_ptr, key_cnt * sizeof(*keys))) != NULL) {
-							for(i = 0; i < key_cnt; ++i) {
-								printf("generated: 0x%" PRIX32 ", key_id: 0x%" PRIX32 ", key_sz: 0x%" PRIX32 ", val: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", keys[i].generated, keys[i].key_id, keys[i].key_sz, keys[i].val[0], keys[i].val[1], keys[i].val[2], keys[i].val[3]);
-							}
-							free(keys);
+				if(kread_addr(object + IO_AES_ACCELERATOR_SPECIAL_KEYS_OFF, &keys_ptr) == KERN_SUCCESS) {
+					printf("keys_ptr: " KADDR_FMT "\n", keys_ptr);
+					if(kread_buf(object + IO_AES_ACCELERATOR_SPECIAL_KEY_CNT_OFF, &key_cnt, sizeof(key_cnt)) == KERN_SUCCESS) {
+						printf("key_cnt: 0x%" PRIX32 "\n", key_cnt);
+						for(; key_cnt-- != 0 && kread_buf(keys_ptr, &key, sizeof(key)) == KERN_SUCCESS; keys_ptr += sizeof(key)) {
+							printf("generated: 0x%" PRIX32 ", key_id: 0x%" PRIX32 ", key_sz: 0x%" PRIX32 ", val: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", key.generated, key.key_id, key.key_sz, key.val[0], key.val[1], key.val[2], key.val[3]);
 						}
 					}
 				}

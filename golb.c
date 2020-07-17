@@ -264,7 +264,7 @@ kdecompress(const void *src, size_t src_len, size_t *dst_len) {
 
 static kern_return_t
 init_arm_pgshift(void) {
-	int cpufamily = CPUFAMILY_UNKNOWN;
+	uint32_t cpufamily = CPUFAMILY_UNKNOWN;
 	size_t len = sizeof(cpufamily);
 
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0) {
@@ -592,7 +592,7 @@ pfinder_rtclock_data(pfinder_t pfinder) {
 	for(ref = pfinder_xref_str(pfinder, "assert_wait_timeout_with_leeway", 8); ref >= pfinder.sec_text.s64.addr && ref - pfinder.sec_text.s64.addr <= pfinder.sec_text.s64.size - sizeof(insns); ref -= sizeof(*insns)) {
 		memcpy(insns, pfinder.sec_text.data + (ref - pfinder.sec_text.s64.addr), sizeof(insns));
 		if(IS_ADRP(insns[0]) && IS_NOP(insns[1]) && IS_LDR_W_UNSIGNED_IMM(insns[2])) {
-			return pfinder_xref_rd(pfinder, RD(insns[0]), ref, 0);
+			return pfinder_xref_rd(pfinder, RD(insns[2]), ref, 0);
 		}
 	}
 	return 0;
@@ -634,7 +634,7 @@ pfinder_pv_head_table_ptr(pfinder_t pfinder) {
 		for(ref = pfinder_xref_str(pfinder, "\"pmap_batch_set_cache_attributes(): pn 0x%08x not managed\\n\"", 0); ref >= pfinder.sec_text.s64.addr && ref - pfinder.sec_text.s64.addr <= pfinder.sec_text.s64.size - sizeof(insns); ref += sizeof(*insns)) {
 			memcpy(insns, pfinder.sec_text.data + (ref - pfinder.sec_text.s64.addr), sizeof(insns));
 			if(IS_CBZ_W(insns[0]) && IS_ADRP(insns[1]) && IS_LDR_X_UNSIGNED_IMM(insns[2])) {
-				return pfinder_xref_rd(pfinder, RD(insns[1]), ref + sizeof(*insns), 0);
+				return pfinder_xref_rd(pfinder, RD(insns[2]), ref + sizeof(*insns), 0);
 			}
 		}
 	}
@@ -803,7 +803,7 @@ vm_map_lookup_entry(kaddr_t vm_map, kaddr_t virt, vm_map_entry_t *vm_entry) {
 static kaddr_t
 vm_page_unpack_ptr(kaddr_t p) {
 	if(p != 0) {
-		if(p & lowglo.pmap_mem_from_array_mask) {
+		if((p & lowglo.pmap_mem_from_array_mask) != 0) {
 			return lowglo.pmap_mem_start_addr + lowglo.pmap_mem_page_sz * (p & ~lowglo.pmap_mem_from_array_mask);
 		}
 		return lowglo.pmap_mem_packed_base_addr + (p << lowglo.pmap_mem_packed_shift);

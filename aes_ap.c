@@ -129,7 +129,7 @@ static key_seed_t uid_key_seeds[] = {
 
 static kern_return_t
 init_arm_globals(void) {
-	int cpufamily = CPUFAMILY_UNKNOWN;
+	uint32_t cpufamily = CPUFAMILY_UNKNOWN;
 	size_t len = sizeof(cpufamily);
 
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0) {
@@ -472,7 +472,7 @@ aes_ap_file(const char *dir, const char *key_type, const char *in_filename, cons
 
 int
 main(int argc, char **argv) {
-	if(argc >= 2 && argc < 5) {
+	if(argc != 1 && argc != 5) {
 		printf("Usage: %s [enc/dec UID0/GID0/GID1 in out]\n", argv[0]);
 	} else if(init_arm_globals() == KERN_SUCCESS) {
 		printf("pmgr_base_off: " KADDR_FMT ", aes_ap_base_off: " KADDR_FMT ", pmgr_aes0_ps_off: " KADDR_FMT "\n", pmgr_base_off, aes_ap_base_off, pmgr_aes0_ps_off);
