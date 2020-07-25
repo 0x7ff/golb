@@ -74,8 +74,8 @@
 #define LDR_X_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 3U)
 #define IS_LDR_W_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xB9400000U)
 #define IS_LDR_X_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xF9400000U)
-#define ARM_PTE_MASK (((1ULL << ARM64_VMADDR_BITS) - 1) & ~ARM_PGMASK)
 #define ADR_IMM(a) ((sextract64(a, 5, 19) << 2U) | extract32(a, 29, 2))
+#define ARM_PTE_MASK (((1ULL << ARM64_VMADDR_BITS) - 1U) & ~ARM_PGMASK)
 #define PVH_HIGH_FLAGS (PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN)
 
 #ifndef SECT_CSTRING
@@ -375,6 +375,17 @@ sec_reset(sec_64_t *sec) {
 	sec->data = NULL;
 }
 
+static kern_return_t
+sec_read_buf(sec_64_t sec, kaddr_t addr, void *buf, size_t sz) {
+	size_t off;
+
+	if(addr < sec.s64.addr || sz > sec.s64.size || (off = addr - sec.s64.addr) > sec.s64.size - sz) {
+		return KERN_FAILURE;
+	}
+	memcpy(buf, sec.data + off, sz);
+	return KERN_SUCCESS;
+}
+
 static void
 pfinder_reset(pfinder_t *pfinder) {
 	pfinder->pc = 0;
@@ -427,7 +438,7 @@ pfinder_init_file(pfinder_t *pfinder, const char *filename) {
 					if(fh.magic == __builtin_bswap32(FAT_MAGIC) && (fh.nfat_arch = __builtin_bswap32(fh.nfat_arch)) < (pfinder->kernel_sz - sizeof(fh)) / sizeof(fa)) {
 						for(p = pfinder->kernel + sizeof(fh); fh.nfat_arch-- != 0; p += sizeof(fa)) {
 							memcpy(&fa, p, sizeof(fa));
-							if(fa.cputype == __builtin_bswap32(CPU_TYPE_ARM64) && (fa.offset = __builtin_bswap32(fa.offset)) < pfinder->kernel_sz && (fa.size = __builtin_bswap32(fa.size)) <= pfinder->kernel_sz - fa.offset && fa.size > sizeof(mh64)) {
+							if(fa.cputype == (cpu_type_t)__builtin_bswap32(CPU_TYPE_ARM64) && (fa.offset = __builtin_bswap32(fa.offset)) < pfinder->kernel_sz && (fa.size = __builtin_bswap32(fa.size)) <= pfinder->kernel_sz - fa.offset && fa.size > sizeof(mh64)) {
 								pfinder->kernel_sz = fa.size;
 								pfinder->kernel += fa.offset;
 								break;
@@ -522,21 +533,22 @@ pfinder_xref_rd(pfinder_t pfinder, uint32_t rd, kaddr_t start, kaddr_t to) {
 	kaddr_t x[32] = { 0 };
 	uint32_t insn;
 
-	for(; start >= pfinder.sec_text.s64.addr && start - pfinder.sec_text.s64.addr <= pfinder.sec_text.s64.size - sizeof(insn); start += sizeof(insn)) {
-		memcpy(&insn, pfinder.sec_text.data + (start - pfinder.sec_text.s64.addr), sizeof(insn));
+	for(; sec_read_buf(pfinder.sec_text, start, &insn, sizeof(insn)) == KERN_SUCCESS; start += sizeof(insn)) {
 		if(IS_LDR_X(insn)) {
 			x[RD(insn)] = start + LDR_X_IMM(insn);
 		} else if(IS_ADR(insn)) {
 			x[RD(insn)] = start + ADR_IMM(insn);
-		} else if(IS_ADRP(insn)) {
-			x[RD(insn)] = ADRP_ADDR(start) + ADRP_IMM(insn);
-			continue;
 		} else if(IS_ADD_X(insn)) {
 			x[RD(insn)] = x[RN(insn)] + ADD_X_IMM(insn);
 		} else if(IS_LDR_W_UNSIGNED_IMM(insn)) {
 			x[RD(insn)] = x[RN(insn)] + LDR_W_UNSIGNED_IMM(insn);
 		} else if(IS_LDR_X_UNSIGNED_IMM(insn)) {
 			x[RD(insn)] = x[RN(insn)] + LDR_X_UNSIGNED_IMM(insn);
+		} else {
+			if(IS_ADRP(insn)) {
+				x[RD(insn)] = ADRP_ADDR(start) + ADRP_IMM(insn);
+			}
+			continue;
 		}
 		if(RD(insn) == rd) {
 			if(to == 0) {
@@ -589,8 +601,7 @@ pfinder_rtclock_data(pfinder_t pfinder) {
 	if(ref != 0) {
 		return ref;
 	}
-	for(ref = pfinder_xref_str(pfinder, "assert_wait_timeout_with_leeway", 8); ref >= pfinder.sec_text.s64.addr && ref - pfinder.sec_text.s64.addr <= pfinder.sec_text.s64.size - sizeof(insns); ref -= sizeof(*insns)) {
-		memcpy(insns, pfinder.sec_text.data + (ref - pfinder.sec_text.s64.addr), sizeof(insns));
+	for(ref = pfinder_xref_str(pfinder, "assert_wait_timeout_with_leeway", 8); sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
 		if(IS_ADRP(insns[0]) && IS_NOP(insns[1]) && IS_LDR_W_UNSIGNED_IMM(insns[2])) {
 			return pfinder_xref_rd(pfinder, RD(insns[2]), ref, 0);
 		}
@@ -606,8 +617,7 @@ pfinder_kernproc(pfinder_t pfinder) {
 	if(ref != 0) {
 		return ref;
 	}
-	for(ref = pfinder_xref_str(pfinder, "\"Should never have an EVFILT_READ except for reg or fifo.\"", 0); ref >= pfinder.sec_text.s64.addr && ref - pfinder.sec_text.s64.addr <= pfinder.sec_text.s64.size - sizeof(insns); ref -= sizeof(*insns)) {
-		memcpy(insns, pfinder.sec_text.data + (ref - pfinder.sec_text.s64.addr), sizeof(insns));
+	for(ref = pfinder_xref_str(pfinder, "\"Should never have an EVFILT_READ except for reg or fifo.\"", 0); sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
 		if(IS_ADRP(insns[0]) && IS_LDR_X_UNSIGNED_IMM(insns[1]) && RD(insns[1]) == 3) {
 			return pfinder_xref_rd(pfinder, RD(insns[1]), ref, 0);
 		}
@@ -623,16 +633,14 @@ pfinder_pv_head_table_ptr(pfinder_t pfinder) {
 	if(ref != 0) {
 		return ref;
 	}
-	if((ref = pfinder_xref_str(pfinder, "pmap_iommu_ioctl_internal", 8)) != 0) {
-		for(; ref >= pfinder.sec_text.s64.addr && ref - pfinder.sec_text.s64.addr <= pfinder.sec_text.s64.size - sizeof(insns); ref -= sizeof(*insns)) {
-			memcpy(insns, pfinder.sec_text.data + (ref - pfinder.sec_text.s64.addr), sizeof(insns));
+	if((ref = pfinder_xref_str(pfinder, "\"pmap_init_pte_page(): invalid PVH type for pte_p %p\"", 0)) != 0) {
+		for(; sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
 			if(IS_ADRP(insns[0]) && IS_LDR_X_UNSIGNED_IMM(insns[1]) && IS_MOV_X(insns[2]) && RD(insns[2]) == 0) {
 				return pfinder_xref_rd(pfinder, RD(insns[1]), ref, 0);
 			}
 		}
 	} else {
-		for(ref = pfinder_xref_str(pfinder, "\"pmap_batch_set_cache_attributes(): pn 0x%08x not managed\\n\"", 0); ref >= pfinder.sec_text.s64.addr && ref - pfinder.sec_text.s64.addr <= pfinder.sec_text.s64.size - sizeof(insns); ref += sizeof(*insns)) {
-			memcpy(insns, pfinder.sec_text.data + (ref - pfinder.sec_text.s64.addr), sizeof(insns));
+		for(ref = pfinder_xref_str(pfinder, "\"pmap_batch_set_cache_attributes(): pn 0x%08x not managed\\n\"", 0); sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref += sizeof(*insns)) {
 			if(IS_CBZ_W(insns[0]) && IS_ADRP(insns[1]) && IS_LDR_X_UNSIGNED_IMM(insns[2])) {
 				return pfinder_xref_rd(pfinder, RD(insns[2]), ref + sizeof(*insns), 0);
 			}
@@ -651,15 +659,13 @@ pfinder_const_boot_args(pfinder_t pfinder) {
 static kaddr_t
 pfinder_lowglo_ptr(pfinder_t pfinder) {
 	kaddr_t ref = pfinder_sym(pfinder, "_lowGlo");
-	const char *p, *e;
 
 	if(ref != 0) {
 		return ref;
 	}
-	for(p = pfinder.sec_data.data, e = p + (pfinder.sec_data.s64.size - sizeof(lowglo)); p <= e; p += PAGE_MAX_SIZE) {
-		memcpy(&lowglo, p, sizeof(lowglo));
+	for(ref = pfinder.sec_data.s64.addr; sec_read_buf(pfinder.sec_data, ref, &lowglo, sizeof(lowglo)) == KERN_SUCCESS; ref += PAGE_MAX_SIZE) {
 		if(memcmp(&lowglo.ver_code, LOWGLO_VER_CODE, sizeof(lowglo.ver_code)) == 0 && lowglo.layout_magic == LOWGLO_LAYOUT_MAGIC && lowglo.pmap_mem_page_sz == sizeof(vm_page_t)) {
-			return pfinder.sec_data.s64.addr + (kaddr_t)(p - pfinder.sec_data.data);
+			return ref;
 		}
 	}
 	return 0;
@@ -878,7 +884,7 @@ golb_find_phys(kaddr_t virt) {
 	vm_page_t m;
 
 	virt -= virt_off;
-	if(vm_map_lookup_entry(our_map, virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && vm_entry.vme_offset == 0 && kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) == KERN_SUCCESS) {
+	if(vm_map_lookup_entry(our_map, virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) == KERN_SUCCESS) {
 		while((vm_page = vm_page_unpack_ptr(m.vmp_listq.next)) != 0) {
 			printf("vm_page: " KADDR_FMT "\n", vm_page);
 			if(vm_page == vm_entry.vme_object || kread_buf(vm_page, &m, sizeof(m)) != KERN_SUCCESS) {
@@ -932,7 +938,7 @@ golb_map(golb_ctx_t *ctx, kaddr_t virt, kaddr_t phys, mach_vm_size_t sz, vm_prot
 		*(volatile kaddr_t *)(virt + map_off) = FAULT_MAGIC;
 	}
 	flags &= ~VM_MAP_FLAGS_NO_ZERO_FILL;
-	if(kwrite_buf(our_map + vm_map_flags_off, &flags, sizeof(flags)) != KERN_SUCCESS || vm_map_lookup_entry(our_map, virt, &vm_entry) != KERN_SUCCESS || vm_entry.vme_object == 0 || vm_entry.vme_offset != 0 || (vm_entry.links.end - virt) < sz || kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) != KERN_SUCCESS || (ctx->orig = calloc(sz >> arm_pgshift, sizeof(ctx->orig[0]))) == NULL) {
+	if(kwrite_buf(our_map + vm_map_flags_off, &flags, sizeof(flags)) != KERN_SUCCESS || vm_map_lookup_entry(our_map, virt, &vm_entry) != KERN_SUCCESS || vm_entry.vme_object == 0 || trunc_page_kernel(vm_entry.vme_offset) != 0 || (vm_entry.links.end - virt) < sz || kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) != KERN_SUCCESS || (ctx->orig = calloc(sz >> arm_pgshift, sizeof(ctx->orig[0]))) == NULL) {
 		return KERN_FAILURE;
 	}
 	ctx->orig_cnt = 0;
