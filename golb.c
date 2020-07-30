@@ -787,7 +787,7 @@ vm_map_lookup_entry(kaddr_t vm_map, kaddr_t virt, vm_map_entry_t *vm_entry) {
 	kaddr_t rb_entry;
 
 	if(kread_addr(vm_map + VM_MAP_HDR_RBH_ROOT_OFF, &rb_entry) == KERN_SUCCESS) {
-		while(rb_entry != sizeof(vm_entry->links)) {
+		while(rb_entry != 0 && rb_entry != sizeof(vm_entry->links)) {
 			printf("rb_entry: " KADDR_FMT "\n", rb_entry);
 			if(kread_buf(rb_entry - sizeof(vm_entry->links), vm_entry, sizeof(*vm_entry)) != KERN_SUCCESS) {
 				break;

@@ -431,18 +431,21 @@ aes_ap_test(void) {
 }
 
 static void
-aes_ap_file(const char *dir, const char *key_type, const char *in_filename, const char *out_filename) {
-	uint32_t cmd = AES_CMD_CBC, opts = AES_KEY_SZ_256;
+aes_ap_file(const char *dir, const char *key_type, const char *in_filename, const char *out_filename, size_t buf_sz) {
+	uint32_t cmd, opts = AES_KEY_SZ_256;
 	struct stat stat_buf;
 	int in_fd, out_fd;
 	size_t len;
 	ssize_t n;
 	void *buf;
 
+	if((buf_sz % AES_BLOCK_SZ) != 0) {
+		return;
+	}
 	if(strcmp(dir, "enc") == 0) {
-		cmd |= AES_CMD_ENC;
+		cmd = AES_CMD_ENC;
 	} else if(strcmp(dir, "dec") == 0) {
-		cmd |= AES_CMD_DEC;
+		cmd = AES_CMD_DEC;
 	} else {
 		return;
 	}
@@ -456,16 +459,27 @@ aes_ap_file(const char *dir, const char *key_type, const char *in_filename, cons
 		return;
 	}
 	if((in_fd = open(in_filename, O_RDONLY | O_CLOEXEC)) != -1) {
-		if(fstat(in_fd, &stat_buf) != -1 && stat_buf.st_size > 0) {
-			len = (size_t)stat_buf.st_size;
-			if((len % AES_BLOCK_SZ) == 0 && (buf = malloc(len)) != NULL) {
-				if((n = read(in_fd, buf, len)) > 0 && (size_t)n == len && aes_ap_cmd(cmd, buf, buf, len, opts) == KERN_SUCCESS && (out_fd = open(out_filename, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, S_IROTH | S_IRGRP | S_IWUSR | S_IRUSR)) != -1) {
-					if((n = write(out_fd, buf, len)) > 0 && (size_t)n == len) {
-						printf("Wrote %zu bytes to file \"%s\".\n", len, out_filename);
-					}
-					close(out_fd);
+		if(fstat(in_fd, &stat_buf) != -1 && S_ISREG(stat_buf.st_mode) && stat_buf.st_size > 0 && (len = (size_t)stat_buf.st_size) >= buf_sz && (len % AES_BLOCK_SZ) == 0) {
+			if(buf_sz == AES_BLOCK_SZ) {
+				buf_sz = len;
+				cmd |= AES_CMD_ECB;
+			} else {
+				if(buf_sz == 0) {
+					buf_sz = len;
 				}
-				free(buf);
+				cmd |= AES_CMD_CBC;
+			}
+			if((out_fd = open(out_filename, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, S_IROTH | S_IRGRP | S_IWUSR | S_IRUSR)) != -1) {
+				do {
+					if((buf = malloc(buf_sz)) != NULL) {
+						if((n = read(in_fd, buf, buf_sz)) > 0 && (size_t)n == buf_sz && aes_ap_cmd(cmd, buf, buf, buf_sz, opts) == KERN_SUCCESS && (n = write(out_fd, buf, buf_sz)) > 0 && (size_t)n == buf_sz) {
+							printf("Wrote %zu bytes to file \"%s\".\n", buf_sz, out_filename);
+						}
+						free(buf);
+					}
+					len -= buf_sz;
+				} while(len != 0);
+				close(out_fd);
 			}
 		}
 		close(in_fd);
@@ -474,14 +488,16 @@ aes_ap_file(const char *dir, const char *key_type, const char *in_filename, cons
 
 int
 main(int argc, char **argv) {
-	if(argc != 1 && argc != 5) {
-		printf("Usage: %s [enc/dec UID0/GID0/GID1 in out]\n", argv[0]);
+	size_t buf_sz;
+
+	if(argc != 1 && argc != 6) {
+		printf("Usage: %s [enc/dec UID0/GID0/GID1 in_file out_file buf_sz]\n", argv[0]);
 	} else if(init_arm_globals() == KERN_SUCCESS) {
 		printf("aes_ap_base_off: " KADDR_FMT ", pmgr_base_off: " KADDR_FMT ", pmgr_aes0_ps_off: " KADDR_FMT "\n", aes_ap_base_off, pmgr_base_off, pmgr_aes0_ps_off);
 		if(golb_init() == KERN_SUCCESS) {
 			if(aes_ap_init() == KERN_SUCCESS) {
-				if(argc == 5) {
-					aes_ap_file(argv[1], argv[2], argv[3], argv[4]);
+				if(argc == 6 && sscanf(argv[5], "%zu", &buf_sz) == 1) {
+					aes_ap_file(argv[1], argv[2], argv[3], argv[4], buf_sz);
 				} else {
 					aes_ap_test();
 				}
