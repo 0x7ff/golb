@@ -155,7 +155,7 @@ init_arm_globals(void) {
 				aes_ap_base_off = 0x2E008000;
 				pmgr_security_base_off = 0x352D0000;
 				return KERN_SUCCESS;
-#if 0
+#ifdef __arm64e__
 			case CPUFAMILY_ARM_VORTEX_TEMPEST:
 				aes_ap_v2 = true;
 				pmgr_base_off = 0x3B000000;
@@ -226,7 +226,7 @@ aes_ap_v1_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opt
 	const uint32_t *local_src = src;
 
 	if(len == 0 || (len % AES_BLOCK_SZ) != 0) {
-		return KERN_FAILURE;
+		return ret;
 	}
 	switch(cmd & AES_CMD_MODE_MASK) {
 		case AES_CMD_ECB:
@@ -298,8 +298,7 @@ aes_ap_v1_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opt
 			*local_dst++ = rAES_AP_TXT_OUT1;
 			*local_dst++ = rAES_AP_TXT_OUT2;
 			*local_dst++ = rAES_AP_TXT_OUT3;
-			len -= AES_BLOCK_SZ;
-		} while(len != 0);
+		} while((len -= AES_BLOCK_SZ) != 0);
 		ret = KERN_SUCCESS;
 	}
 	rPMGR_AES0_PS &= ~PMGR_PS_RUN_MAX;
@@ -309,10 +308,11 @@ aes_ap_v1_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opt
 
 static kern_return_t
 aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint32_t opts) {
+	kern_return_t ret = KERN_FAILURE;
 	uint32_t key_cmd, key_select;
 
 	if(len == 0 || (len % AES_BLOCK_SZ) != 0) {
-		return KERN_FAILURE;
+		return ret;
 	}
 	key_cmd = OP_KEY << CMD_OP_SHIFT;
 	switch(cmd & AES_CMD_MODE_MASK) {
@@ -323,7 +323,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 			key_cmd |= BLOCK_MODE_CBC << CMD_KEY_CMD_BLOCK_MODE_SHIFT;
 			break;
 		default:
-			return KERN_FAILURE;
+			return ret;
 	}
 	switch(cmd & AES_CMD_DIR_MASK) {
 		case AES_CMD_ENC:
@@ -333,7 +333,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 			key_cmd |= 0U << CMD_KEY_CMD_ENCRYPT_SHIFT;
 			break;
 		default:
-			return KERN_FAILURE;
+			return ret;
 	}
 	switch(opts & AES_KEY_SZ_MASK) {
 		case AES_KEY_SZ_128:
@@ -346,7 +346,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 			key_cmd |= KEY_LEN_256 << CMD_KEY_CMD_KEY_LEN_SHIFT;
 			break;
 		default:
-			return KERN_FAILURE;
+			return ret;
 	}
 	switch(opts & AES_KEY_TYPE_MASK) {
 		case AES_KEY_TYPE_UID0:
@@ -359,7 +359,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 			key_select = KEY_SELECT_GID_AP_2;
 			break;
 		default:
-			return KERN_FAILURE;
+			return ret;
 	}
 	key_cmd |= key_select << CMD_KEY_CMD_KEY_SELECT_SHIFT;
 	if((rPMGR_SECURITY & (1U << (key_select - 1U))) == 0) {
@@ -380,14 +380,12 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 		rAES_CMD_FIFO = (OP_FLAG << CMD_OP_SHIFT) | (1U << CMD_FLAG_SEND_INT_SHIFT) | (1U << CMD_FLAG_STOP_CMDS_SHIFT);
 		while((rAES_INT_STATUS & AES_BLK_INT_STATUS_FLAG_CMD_UMASK) == 0) {}
 		rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_CMD_UMASK;
-		rAES_CTRL = AES_BLK_CTRL_STOP_UMASK;
-		if(pmgr_aes0_ps_off != 0x80240) {
-			rPMGR_AES0_PS &= ~PMGR_PS_RUN_MAX;
-			while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
+		if(rAES_INT_STATUS == 0) {
+			ret = KERN_SUCCESS;
 		}
-		return KERN_SUCCESS;
+		rAES_CTRL = AES_BLK_CTRL_STOP_UMASK;
 	}
-	return KERN_FAILURE;
+	return ret;
 }
 
 static kern_return_t
@@ -412,8 +410,7 @@ aes_ap_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opts) 
 			}
 			virt_src += aes_len;
 			virt_dst += aes_len;
-			len -= aes_len;
-		} while(len != 0);
+		} while((len -= aes_len) != 0);
 		return KERN_SUCCESS;
 	}
 	return aes_ap_v1_cmd(cmd, src, dst, len, opts);
@@ -423,10 +420,8 @@ static void
 aes_ap_test(void) {
 	size_t i;
 
-	for(i = 0; i < sizeof(uid_key_seeds) / sizeof(*uid_key_seeds); ++i) {
-		if(aes_ap_cmd(AES_CMD_CBC | AES_CMD_ENC, uid_key_seeds[i].key, uid_key_seeds[i].val, sizeof(uid_key_seeds[i].key), AES_KEY_SZ_256 | AES_KEY_TYPE_UID0) == KERN_SUCCESS) {
-			printf("key_id: 0x%" PRIX32 ", val: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", uid_key_seeds[i].key_id, uid_key_seeds[i].val[0], uid_key_seeds[i].val[1], uid_key_seeds[i].val[2], uid_key_seeds[i].val[3]);
-		}
+	for(i = 0; i < sizeof(uid_key_seeds) / sizeof(*uid_key_seeds) && aes_ap_cmd(AES_CMD_CBC | AES_CMD_ENC, uid_key_seeds[i].key, uid_key_seeds[i].val, sizeof(uid_key_seeds[i].key), AES_KEY_SZ_256 | AES_KEY_TYPE_UID0) == KERN_SUCCESS; ++i) {
+		printf("key_id: 0x%" PRIX32 ", val: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", uid_key_seeds[i].key_id, uid_key_seeds[i].val[0], uid_key_seeds[i].val[1], uid_key_seeds[i].val[2], uid_key_seeds[i].val[3]);
 	}
 }
 
@@ -439,9 +434,6 @@ aes_ap_file(const char *dir, const char *key_type, const char *in_filename, cons
 	ssize_t n;
 	void *buf;
 
-	if((buf_sz % AES_BLOCK_SZ) != 0) {
-		return;
-	}
 	if(strcmp(dir, "enc") == 0) {
 		cmd = AES_CMD_ENC;
 	} else if(strcmp(dir, "dec") == 0) {
@@ -458,7 +450,7 @@ aes_ap_file(const char *dir, const char *key_type, const char *in_filename, cons
 	} else {
 		return;
 	}
-	if((in_fd = open(in_filename, O_RDONLY | O_CLOEXEC)) != -1) {
+	if((buf_sz % AES_BLOCK_SZ) == 0 && (in_fd = open(in_filename, O_RDONLY | O_CLOEXEC)) != -1) {
 		if(fstat(in_fd, &stat_buf) != -1 && S_ISREG(stat_buf.st_mode) && stat_buf.st_size > 0 && (len = (size_t)stat_buf.st_size) >= buf_sz && (len % AES_BLOCK_SZ) == 0) {
 			if(buf_sz == AES_BLOCK_SZ) {
 				buf_sz = len;
@@ -470,15 +462,15 @@ aes_ap_file(const char *dir, const char *key_type, const char *in_filename, cons
 				cmd |= AES_CMD_CBC;
 			}
 			if((out_fd = open(out_filename, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, S_IROTH | S_IRGRP | S_IWUSR | S_IRUSR)) != -1) {
-				do {
-					if((buf = malloc(buf_sz)) != NULL) {
-						if((n = read(in_fd, buf, buf_sz)) > 0 && (size_t)n == buf_sz && aes_ap_cmd(cmd, buf, buf, buf_sz, opts) == KERN_SUCCESS && (n = write(out_fd, buf, buf_sz)) > 0 && (size_t)n == buf_sz) {
-							printf("Wrote %zu bytes to file \"%s\".\n", buf_sz, out_filename);
+				if((buf = malloc(buf_sz)) != NULL) {
+					do {
+						if((n = read(in_fd, buf, buf_sz)) <= 0 || (size_t)n != buf_sz || aes_ap_cmd(cmd, buf, buf, buf_sz, opts) != KERN_SUCCESS || (n = write(out_fd, buf, buf_sz)) <= 0 || (size_t)n != buf_sz) {
+							break;
 						}
-						free(buf);
-					}
-					len -= buf_sz;
-				} while(len != 0);
+						printf("Wrote %zu bytes to file \"%s\".\n", buf_sz, out_filename);
+					} while((len -= buf_sz) != 0);
+					free(buf);
+				}
 				close(out_fd);
 			}
 		}
@@ -496,8 +488,10 @@ main(int argc, char **argv) {
 		printf("aes_ap_base_off: " KADDR_FMT ", pmgr_base_off: " KADDR_FMT ", pmgr_aes0_ps_off: " KADDR_FMT "\n", aes_ap_base_off, pmgr_base_off, pmgr_aes0_ps_off);
 		if(golb_init() == KERN_SUCCESS) {
 			if(aes_ap_init() == KERN_SUCCESS) {
-				if(argc == 6 && sscanf(argv[5], "%zu", &buf_sz) == 1) {
-					aes_ap_file(argv[1], argv[2], argv[3], argv[4], buf_sz);
+				if(argc == 6) {
+					if(sscanf(argv[5], "%zu", &buf_sz) == 1) {
+						aes_ap_file(argv[1], argv[2], argv[3], argv[4], buf_sz);
+					}
 				} else {
 					aes_ap_test();
 				}
