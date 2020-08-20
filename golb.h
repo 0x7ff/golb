@@ -2,10 +2,11 @@
 #	define GOLB_H
 #	include "common.h"
 typedef struct {
+	kaddr_t virt;
+	size_t page_cnt;
 	struct {
 		kaddr_t ptep, pte;
-	} *orig;
-	size_t orig_cnt;
+	} *pages;
 } golb_ctx_t;
 
 kern_return_t
@@ -24,5 +25,5 @@ kern_return_t
 golb_flush_core_tlb_asid(void);
 
 kern_return_t
-golb_map(golb_ctx_t *, kaddr_t, kaddr_t, mach_vm_size_t, vm_prot_t);
+golb_map(golb_ctx_t *, kaddr_t, mach_vm_size_t, vm_prot_t);
 #endif

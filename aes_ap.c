@@ -2,7 +2,6 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 
-#define PMGR_SZ (0x100000)
 #define IO_BASE (0x200000000ULL)
 
 #define OP_IV (2U)
@@ -67,38 +66,39 @@
 #define CMD_DATA_UPPER_ADDR_SRC_SHIFT (16U)
 #define CMD_DATA_UPPER_ADDR_DST_MASK (0xFFU)
 #define CMD_DATA_UPPER_ADDR_SRC_MASK (0xFFU)
+#define PMGR_AES0_PS_SZ (vm_kernel_page_size)
 #define PMGR_SECURITY_SZ (vm_kernel_page_size)
 #define AES_BLK_INT_STATUS_FLAG_CMD_UMASK (32U)
-#define PMGR_BASE_ADDR (IO_BASE + pmgr_base_off)
 #define AES_AP_BASE_ADDR (IO_BASE + aes_ap_base_off)
-#define rAES_CTRL (*(volatile uint32_t *)(aes_ap_virt_base + 0x8))
+#define PMGR_AES0_PS_BASE_ADDR (IO_BASE + pmgr_aes0_ps_off)
+#define rAES_CTRL (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x8))
 #define PMGR_SECURITY_BASE_ADDR (IO_BASE + pmgr_security_base_off)
-#define rAES_AP_DIS (*(volatile uint32_t *)(aes_ap_virt_base + 0x4))
-#define rPMGR_SECURITY (*(volatile uint32_t *)pmgr_security_virt_base)
-#define rAES_CMD_FIFO (*(volatile uint32_t *)(aes_ap_virt_base + 0x200))
-#define rAES_AP_IV_IN0 (*(volatile uint32_t *)(aes_ap_virt_base + 0x100))
-#define rAES_AP_IV_IN1 (*(volatile uint32_t *)(aes_ap_virt_base + 0x104))
-#define rAES_AP_IV_IN2 (*(volatile uint32_t *)(aes_ap_virt_base + 0x108))
-#define rAES_AP_IV_IN3 (*(volatile uint32_t *)(aes_ap_virt_base + 0x10C))
-#define rAES_AP_TXT_IN0 (*(volatile uint32_t *)(aes_ap_virt_base + 0x40))
-#define rAES_AP_TXT_IN1 (*(volatile uint32_t *)(aes_ap_virt_base + 0x44))
-#define rAES_AP_TXT_IN2 (*(volatile uint32_t *)(aes_ap_virt_base + 0x48))
-#define rAES_AP_TXT_IN3 (*(volatile uint32_t *)(aes_ap_virt_base + 0x4C))
-#define rAES_INT_STATUS (*(volatile uint32_t *)(aes_ap_virt_base + 0x18))
-#define rAES_AP_TXT_OUT0 (*(volatile uint32_t *)(aes_ap_virt_base + 0x80))
-#define rAES_AP_TXT_OUT1 (*(volatile uint32_t *)(aes_ap_virt_base + 0x84))
-#define rAES_AP_TXT_OUT2 (*(volatile uint32_t *)(aes_ap_virt_base + 0x88))
-#define rAES_AP_TXT_OUT3 (*(volatile uint32_t *)(aes_ap_virt_base + 0x8C))
-#define rAES_AP_TXT_IN_STS (*(volatile uint32_t *)(aes_ap_virt_base + 0xC))
-#define rAES_AP_IV_IN_CTRL (*(volatile uint32_t *)(aes_ap_virt_base + 0xE0))
-#define rAES_AP_TXT_IN_CTRL (*(volatile uint32_t *)(aes_ap_virt_base + 0x8))
-#define rAES_AP_KEY_IN_CTRL (*(volatile uint32_t *)(aes_ap_virt_base + 0x90))
-#define rAES_AP_TXT_OUT_STS (*(volatile uint32_t *)(aes_ap_virt_base + 0x50))
-#define rPMGR_AES0_PS (*(volatile uint32_t *)(pmgr_virt_base + pmgr_aes0_ps_off))
+#define rAES_AP_DIS (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x4))
+#define rPMGR_AES0_PS (*(volatile uint32_t *)(pmgr_aes0_ps_ctx.virt))
+#define rPMGR_SECURITY (*(volatile uint32_t *)pmgr_security_ctx.virt)
+#define rAES_CMD_FIFO (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x200))
+#define rAES_AP_IV_IN0 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x100))
+#define rAES_AP_IV_IN1 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x104))
+#define rAES_AP_IV_IN2 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x108))
+#define rAES_AP_IV_IN3 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x10C))
+#define rAES_AP_TXT_IN0 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x40))
+#define rAES_AP_TXT_IN1 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x44))
+#define rAES_AP_TXT_IN2 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x48))
+#define rAES_AP_TXT_IN3 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x4C))
+#define rAES_INT_STATUS (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x18))
+#define rAES_AP_TXT_OUT0 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x80))
+#define rAES_AP_TXT_OUT1 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x84))
+#define rAES_AP_TXT_OUT2 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x88))
+#define rAES_AP_TXT_OUT3 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x8C))
+#define rAES_AP_TXT_IN_STS (*(volatile uint32_t *)(aes_ap_ctx.virt + 0xC))
+#define rAES_AP_IV_IN_CTRL (*(volatile uint32_t *)(aes_ap_ctx.virt + 0xE0))
+#define rAES_AP_TXT_IN_CTRL (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x8))
+#define rAES_AP_KEY_IN_CTRL (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x90))
+#define rAES_AP_TXT_OUT_STS (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x50))
 
 static bool aes_ap_v2;
-static golb_ctx_t aes_ap_ctx, pmgr_ctx, pmgr_security_ctx;
-static kaddr_t aes_ap_base_off, pmgr_base_off, pmgr_security_base_off, aes_ap_virt_base, pmgr_virt_base, pmgr_security_virt_base, pmgr_aes0_ps_off;
+static golb_ctx_t aes_ap_ctx, pmgr_aes0_ps_ctx, pmgr_security_ctx;
+static kaddr_t aes_ap_base_off, pmgr_security_base_off, pmgr_aes0_ps_off;
 
 static struct {
 	uint32_t key_id, key[4], val[4];
@@ -125,49 +125,48 @@ init_arm_globals(void) {
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0) {
 		switch(cpufamily) {
 			case CPUFAMILY_ARM_CYCLONE:
-				pmgr_base_off = 0xE000000;
-				pmgr_aes0_ps_off = 0x20100;
 				aes_ap_base_off = 0xA108000;
+				pmgr_aes0_ps_off = 0xE020100;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_TYPHOON:
-				pmgr_base_off = 0xE000000;
-				pmgr_aes0_ps_off = 0x201E8;
 				aes_ap_base_off = 0xA108000;
+				pmgr_aes0_ps_off = 0xE0201E8;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_TWISTER:
 				aes_ap_v2 = true;
-				pmgr_base_off = 0xE000000;
-				pmgr_aes0_ps_off = 0x80210;
 				aes_ap_base_off = 0xA108000;
+				pmgr_aes0_ps_off = 0xE080210;
 				pmgr_security_base_off = 0x102D0000;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_HURRICANE:
 				aes_ap_v2 = true;
-				pmgr_base_off = 0xE000000;
-				pmgr_aes0_ps_off = 0x80220;
+#if defined(TARGET_OS_BRIDGE) && TARGET_OS_BRIDGE == 1
+				aes_ap_base_off = 0xA008000;
+				pmgr_aes0_ps_off = 0xE080238;
+				pmgr_security_base_off = 0x112D0000;
+#else
 				aes_ap_base_off = 0xA108000;
+				pmgr_aes0_ps_off = 0xE080220;
 				pmgr_security_base_off = 0x102D0000;
+#endif
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_MONSOON_MISTRAL:
 				aes_ap_v2 = true;
-				pmgr_base_off = 0x32000000;
-				pmgr_aes0_ps_off = 0x80240;
 				aes_ap_base_off = 0x2E008000;
+				pmgr_aes0_ps_off = 0x32080240;
 				pmgr_security_base_off = 0x352D0000;
 				return KERN_SUCCESS;
 #ifdef __arm64e__
 			case CPUFAMILY_ARM_VORTEX_TEMPEST:
 				aes_ap_v2 = true;
-				pmgr_base_off = 0x3B000000;
-				pmgr_aes0_ps_off = 0x80220;
 				aes_ap_base_off = 0x35008000;
+				pmgr_aes0_ps_off = 0x3B080228;
 				pmgr_security_base_off = 0x3D2D0000;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_LIGHTNING_THUNDER:
 				aes_ap_v2 = true;
-				pmgr_base_off = 0x3B000000;
-				pmgr_aes0_ps_off = 0x801D0;
 				aes_ap_base_off = 0x35008000;
+				pmgr_aes0_ps_off = 0x3B0801D8;
 				pmgr_security_base_off = 0x3D2D0000;
 				return KERN_SUCCESS;
 #endif
@@ -181,40 +180,22 @@ init_arm_globals(void) {
 static void
 aes_ap_term(void) {
 	golb_unmap(aes_ap_ctx);
-	mach_vm_deallocate(mach_task_self(), aes_ap_virt_base, AES_AP_SZ);
-	golb_unmap(pmgr_ctx);
-	mach_vm_deallocate(mach_task_self(), pmgr_virt_base, PMGR_SZ);
+	golb_unmap(pmgr_aes0_ps_ctx);
 	if(aes_ap_v2) {
 		golb_unmap(pmgr_security_ctx);
-		mach_vm_deallocate(mach_task_self(), pmgr_security_virt_base, PMGR_SECURITY_SZ);
 	}
 }
 
 static kern_return_t
 aes_ap_init(void) {
-	if(mach_vm_allocate(mach_task_self(), &aes_ap_virt_base, AES_AP_SZ, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
-		printf("aes_ap_virt_base: " KADDR_FMT "\n", aes_ap_virt_base);
-		if(golb_map(&aes_ap_ctx, aes_ap_virt_base, AES_AP_BASE_ADDR, AES_AP_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-			if(mach_vm_allocate(mach_task_self(), &pmgr_virt_base, PMGR_SZ, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
-				printf("pmgr_virt_base: " KADDR_FMT "\n", pmgr_virt_base);
-				if(golb_map(&pmgr_ctx, pmgr_virt_base, PMGR_BASE_ADDR, PMGR_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-					if(!aes_ap_v2) {
-						return KERN_SUCCESS;
-					}
-					if(mach_vm_allocate(mach_task_self(), &pmgr_security_virt_base, PMGR_SECURITY_SZ, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
-						printf("pmgr_security_virt_base: " KADDR_FMT "\n", pmgr_security_virt_base);
-						if(golb_map(&pmgr_security_ctx, pmgr_security_virt_base, PMGR_SECURITY_BASE_ADDR, PMGR_SECURITY_SZ, VM_PROT_READ) == KERN_SUCCESS) {
-							return KERN_SUCCESS;
-						}
-						mach_vm_deallocate(mach_task_self(), pmgr_security_virt_base, PMGR_SECURITY_SZ);
-					}
-					golb_unmap(pmgr_ctx);
-				}
-				mach_vm_deallocate(mach_task_self(), pmgr_virt_base, PMGR_SZ);
+	if(golb_map(&aes_ap_ctx, AES_AP_BASE_ADDR, AES_AP_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
+		if(golb_map(&pmgr_aes0_ps_ctx, PMGR_AES0_PS_BASE_ADDR, PMGR_AES0_PS_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
+			if(!aes_ap_v2 || golb_map(&pmgr_security_ctx, PMGR_SECURITY_BASE_ADDR, PMGR_SECURITY_SZ, VM_PROT_READ) == KERN_SUCCESS) {
+				return KERN_SUCCESS;
 			}
-			golb_unmap(aes_ap_ctx);
+			golb_unmap(pmgr_aes0_ps_ctx);
 		}
-		mach_vm_deallocate(mach_task_self(), aes_ap_virt_base, AES_AP_SZ);
+		golb_unmap(aes_ap_ctx);
 	}
 	return KERN_FAILURE;
 }
@@ -308,8 +289,8 @@ aes_ap_v1_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opt
 
 static kern_return_t
 aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint32_t opts) {
+	uint32_t key_cmd, key_select, status;
 	kern_return_t ret = KERN_FAILURE;
-	uint32_t key_cmd, key_select;
 
 	if(len == 0 || (len % AES_BLOCK_SZ) != 0) {
 		return ret;
@@ -363,27 +344,28 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 	}
 	key_cmd |= key_select << CMD_KEY_CMD_KEY_SELECT_SHIFT;
 	if((rPMGR_SECURITY & (1U << (key_select - 1U))) == 0) {
-		rPMGR_AES0_PS |= PMGR_PS_RUN_MAX;
-		while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
-		rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_CMD_UMASK;
-		rAES_CTRL = AES_BLK_CTRL_START_UMASK;
-		rAES_CMD_FIFO = key_cmd;
-		rAES_CMD_FIFO = OP_IV << CMD_OP_SHIFT;
-		rAES_CMD_FIFO = 0;
-		rAES_CMD_FIFO = 0;
-		rAES_CMD_FIFO = 0;
-		rAES_CMD_FIFO = 0;
-		rAES_CMD_FIFO = (OP_DATA << CMD_OP_SHIFT) | (((uint32_t)len & CMD_DATA_CMD_LEN_MASK) << CMD_DATA_CMD_LEN_SHIFT);
-		rAES_CMD_FIFO = (((uint32_t)(phys_src >> 32U) & CMD_DATA_UPPER_ADDR_SRC_MASK) << CMD_DATA_UPPER_ADDR_SRC_SHIFT) | (((uint32_t)(phys_dst >> 32U) & CMD_DATA_UPPER_ADDR_DST_MASK) << CMD_DATA_UPPER_ADDR_DST_SHIFT);
-		rAES_CMD_FIFO = (uint32_t)phys_src;
-		rAES_CMD_FIFO = (uint32_t)phys_dst;
-		rAES_CMD_FIFO = (OP_FLAG << CMD_OP_SHIFT) | (1U << CMD_FLAG_SEND_INT_SHIFT) | (1U << CMD_FLAG_STOP_CMDS_SHIFT);
-		while((rAES_INT_STATUS & AES_BLK_INT_STATUS_FLAG_CMD_UMASK) == 0) {}
-		rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_CMD_UMASK;
-		if(rAES_INT_STATUS == 0) {
-			ret = KERN_SUCCESS;
-		}
-		rAES_CTRL = AES_BLK_CTRL_STOP_UMASK;
+		do {
+			rPMGR_AES0_PS |= PMGR_PS_RUN_MAX;
+			while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
+			rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_CMD_UMASK;
+			rAES_CTRL = AES_BLK_CTRL_START_UMASK;
+			rAES_CMD_FIFO = key_cmd;
+			rAES_CMD_FIFO = OP_IV << CMD_OP_SHIFT;
+			rAES_CMD_FIFO = 0;
+			rAES_CMD_FIFO = 0;
+			rAES_CMD_FIFO = 0;
+			rAES_CMD_FIFO = 0;
+			rAES_CMD_FIFO = (OP_DATA << CMD_OP_SHIFT) | (((uint32_t)len & CMD_DATA_CMD_LEN_MASK) << CMD_DATA_CMD_LEN_SHIFT);
+			rAES_CMD_FIFO = (((uint32_t)(phys_src >> 32U) & CMD_DATA_UPPER_ADDR_SRC_MASK) << CMD_DATA_UPPER_ADDR_SRC_SHIFT) | (((uint32_t)(phys_dst >> 32U) & CMD_DATA_UPPER_ADDR_DST_MASK) << CMD_DATA_UPPER_ADDR_DST_SHIFT);
+			rAES_CMD_FIFO = (uint32_t)phys_src;
+			rAES_CMD_FIFO = (uint32_t)phys_dst;
+			rAES_CMD_FIFO = (OP_FLAG << CMD_OP_SHIFT) | (1U << CMD_FLAG_SEND_INT_SHIFT) | (1U << CMD_FLAG_STOP_CMDS_SHIFT);
+			while((rAES_INT_STATUS & AES_BLK_INT_STATUS_FLAG_CMD_UMASK) == 0) {}
+			rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_CMD_UMASK;
+			status = rAES_INT_STATUS;
+			rAES_CTRL = AES_BLK_CTRL_STOP_UMASK;
+		} while(status != 0);
+		ret = KERN_SUCCESS;
 	}
 	return ret;
 }
@@ -485,15 +467,13 @@ main(int argc, char **argv) {
 	if(argc != 1 && argc != 6) {
 		printf("Usage: %s [enc/dec UID0/GID0/GID1 in_file out_file buf_sz]\n", argv[0]);
 	} else if(init_arm_globals() == KERN_SUCCESS) {
-		printf("aes_ap_base_off: " KADDR_FMT ", pmgr_base_off: " KADDR_FMT ", pmgr_aes0_ps_off: " KADDR_FMT "\n", aes_ap_base_off, pmgr_base_off, pmgr_aes0_ps_off);
+		printf("aes_ap_base_off: " KADDR_FMT ", pmgr_aes0_ps_off: " KADDR_FMT "\n", aes_ap_base_off, pmgr_aes0_ps_off);
 		if(golb_init() == KERN_SUCCESS) {
 			if(aes_ap_init() == KERN_SUCCESS) {
-				if(argc == 6) {
-					if(sscanf(argv[5], "%zu", &buf_sz) == 1) {
-						aes_ap_file(argv[1], argv[2], argv[3], argv[4], buf_sz);
-					}
-				} else {
+				if(argc == 1) {
 					aes_ap_test();
+				} else if(sscanf(argv[5], "%zu", &buf_sz) == 1) {
+					aes_ap_file(argv[1], argv[2], argv[3], argv[4], buf_sz);
 				}
 				aes_ap_term();
 			}
