@@ -916,7 +916,6 @@ golb_unmap(golb_ctx_t ctx) {
 kern_return_t
 golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
 	kaddr_t phys_off = phys & vm_kernel_page_mask, vm_page, vphys = 0, pv_h, ptep = 0, pte;
-	kern_return_t ret = KERN_FAILURE;
 	mach_vm_offset_t map_off;
 	vm_map_entry_t vm_entry;
 	uint32_t flags;
@@ -979,16 +978,20 @@ golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
 							break;
 						}
 					}
-					if(map_off != sz || (ret = golb_flush_core_tlb_asid()) != KERN_SUCCESS) {
-						golb_unmap(*ctx);
+					if(map_off != sz || golb_flush_core_tlb_asid() != KERN_SUCCESS) {
+						while(ctx->page_cnt-- != 0) {
+							kwrite_addr(ctx->pages[ctx->page_cnt].ptep, ctx->pages[ctx->page_cnt].pte);
+						}
+						golb_flush_core_tlb_asid();
 					} else {
 						ctx->virt += phys_off;
+						return KERN_SUCCESS;
 					}
-					return ret;
+					free(ctx->pages);
 				}
 			}
 		}
 		mach_vm_deallocate(mach_task_self(), ctx->virt, sz);
 	}
-	return ret;
+	return KERN_FAILURE;
 }
