@@ -57,6 +57,7 @@
 #define RD(a) extract32(a, 0, 5)
 #define RN(a) extract32(a, 5, 5)
 #define ARM_PTE_AP(a) ((a) << 6U)
+#define PVH_FLAG_UNK (1ULL << 58U)
 #define PVH_FLAG_CPU (1ULL << 62U)
 #define LOWGLO_VER_CODE "Kraken  "
 #define PVH_FLAG_EXEC (1ULL << 60U)
@@ -91,7 +92,6 @@
 #define IS_LDR_X_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xF9400000U)
 #define ADR_IMM(a) ((sextract64(a, 5, 19) << 2U) | extract32(a, 29, 2))
 #define ARM_PTE_MASK (((1ULL << ARM64_VMADDR_BITS) - 1U) & ~ARM_PGMASK)
-#define PVH_HIGH_FLAGS (PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN)
 
 #ifndef SECT_CSTRING
 #	define SECT_CSTRING "__cstring"
@@ -151,7 +151,7 @@ static lowglo_t lowglo;
 static unsigned arm_pgshift;
 static boot_args_t boot_args;
 static task_t tfp0 = MACH_PORT_NULL;
-static kaddr_t kernproc, pv_head_table_ptr, const_boot_args, lowglo_ptr, pv_head_table, our_map, our_pmap;
+static kaddr_t pvh_high_flags, kernproc, pv_head_table_ptr, const_boot_args, lowglo_ptr, pv_head_table, our_map, our_pmap;
 static size_t task_map_off, proc_task_off, proc_p_pid_off, pmap_sw_asid_off, vm_map_flags_off, cpu_data_rtclock_datap_off;
 
 static uint32_t
@@ -728,6 +728,7 @@ pfinder_init_offsets(void) {
 	kern_return_t ret = KERN_FAILURE;
 	pfinder_t pfinder;
 
+	pvh_high_flags = 0;
 	task_map_off = 0x20;
 	proc_task_off = 0x18;
 	proc_p_pid_off = 0x10;
@@ -746,6 +747,7 @@ pfinder_init_offsets(void) {
 #else
 			cpu_data_rtclock_datap_off = 0x198;
 #endif
+			pvh_high_flags = PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN;
 			if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b1) {
 				task_map_off = 0x28;
 				pmap_sw_asid_off = 0xEE;
@@ -755,6 +757,7 @@ pfinder_init_offsets(void) {
 						pmap_sw_asid_off = 0xE6;
 						if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_14_0_b1) {
 							pmap_sw_asid_off = 0xDE;
+							pvh_high_flags |= PVH_FLAG_UNK;
 						}
 					}
 				}
@@ -969,7 +972,7 @@ golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
 							if((pv_h & PVH_TYPE_MASK) != PVH_TYPE_PTEP) {
 								break;
 							}
-							ptep = (pv_h & PVH_LIST_MASK) | PVH_HIGH_FLAGS;
+							ptep = (pv_h & PVH_LIST_MASK) | pvh_high_flags;
 						} else {
 							vphys += ARM_PGBYTES;
 							ptep += sizeof(pte);
