@@ -29,6 +29,7 @@
 #define PROC_P_LIST_LE_PREV_OFF (0x8)
 #define VM_MAP_HDR_RBH_ROOT_OFF (0x38)
 #define PROC_P_LIST_LH_FIRST_OFF (0x0)
+#define PREBOOT_PATH "/private/preboot/"
 #define kCFCoreFoundationVersionNumber_iOS_13_0_b2 (1656)
 #define kCFCoreFoundationVersionNumber_iOS_14_0_b1 (1740)
 #define kCFCoreFoundationVersionNumber_iOS_11_0_b1 (1429.15)
@@ -57,7 +58,6 @@
 #define RD(a) extract32(a, 0, 5)
 #define RN(a) extract32(a, 5, 5)
 #define ARM_PTE_AP(a) ((a) << 6U)
-#define PVH_FLAG_UNK (1ULL << 58U)
 #define PVH_FLAG_CPU (1ULL << 62U)
 #define LOWGLO_VER_CODE "Kraken  "
 #define PVH_FLAG_EXEC (1ULL << 60U)
@@ -75,6 +75,7 @@
 #define ARM_PTE_NX (0x40000000000000ULL)
 #define ARM_PTE_PNX (0x20000000000000ULL)
 #define ADD_X_IMM(a) extract32(a, 10, 12)
+#define PVH_FLAG_PPL_HASHED (1ULL << 58U)
 #define KCOMP_HDR_TYPE_LZSS (0x6C7A7373U)
 #define LOWGLO_LAYOUT_MAGIC (0xC0DEC0DEU)
 #define FAULT_MAGIC (0xAAAAAAAAAAAAAAAAULL)
@@ -444,7 +445,7 @@ pfinder_init_file(pfinder_t *pfinder, const char *filename) {
 
 	pfinder_reset(pfinder);
 	if((fd = open(filename, O_RDONLY | O_CLOEXEC)) != -1) {
-		if(fstat(fd, &stat_buf) != -1 && stat_buf.st_size > 0) {
+		if(fstat(fd, &stat_buf) != -1 && S_ISREG(stat_buf.st_mode) && stat_buf.st_size > 0) {
 			len = (size_t)stat_buf.st_size;
 			if((m = mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, 0)) != MAP_FAILED) {
 				if((pfinder->data = kdecompress(m, len, &pfinder->kernel_sz)) != NULL && pfinder->kernel_sz > sizeof(fh) + sizeof(mh64)) {
@@ -723,10 +724,44 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 	return KERN_FAILURE;
 }
 
+static char *
+get_boot_path(void) {
+	int fd = open(PREBOOT_PATH "active", O_RDONLY | O_CLOEXEC);
+	size_t hash_len, path_len = sizeof(BOOT_PATH);
+	struct stat stat_buf;
+	char *path = NULL;
+	ssize_t n;
+
+	if(fd != -1) {
+		if(fstat(fd, &stat_buf) != -1 && S_ISREG(stat_buf.st_mode) && stat_buf.st_size > 0) {
+			hash_len = (size_t)stat_buf.st_size;
+			path_len += strlen(PREBOOT_PATH) + hash_len;
+			if((path = malloc(path_len)) != NULL) {
+				if((n = read(fd, path + strlen(PREBOOT_PATH), hash_len)) > 0 && (size_t)n == hash_len) {
+					memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
+				} else {
+					free(path);
+					path = NULL;
+				}
+			}
+		}
+		close(fd);
+	}
+	if(path == NULL) {
+		path_len = sizeof(BOOT_PATH);
+		path = malloc(path_len);
+	}
+	if(path != NULL) {
+		memcpy(path + (path_len - sizeof(BOOT_PATH)), BOOT_PATH, sizeof(BOOT_PATH));
+	}
+	return path;
+}
+
 static kern_return_t
 pfinder_init_offsets(void) {
 	kern_return_t ret = KERN_FAILURE;
 	pfinder_t pfinder;
+	char *boot_path;
 
 	pvh_high_flags = 0;
 	task_map_off = 0x20;
@@ -757,28 +792,32 @@ pfinder_init_offsets(void) {
 						pmap_sw_asid_off = 0xE6;
 						if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_14_0_b1) {
 							pmap_sw_asid_off = 0xDE;
-							pvh_high_flags |= PVH_FLAG_UNK;
+							pvh_high_flags |= PVH_FLAG_PPL_HASHED;
 						}
 					}
 				}
 			}
 		}
 	}
-	if(pfinder_init_file(&pfinder, BOOT_PATH) == KERN_SUCCESS) {
-		if(pfinder_init_kbase(&pfinder) == KERN_SUCCESS && (kernproc = pfinder_kernproc(pfinder)) != 0) {
-			printf("kernproc: " KADDR_FMT "\n", kernproc);
-			if((pv_head_table_ptr = pfinder_pv_head_table_ptr(pfinder)) != 0) {
-				printf("pv_head_table_ptr: " KADDR_FMT "\n", pv_head_table_ptr);
-				if((const_boot_args = pfinder_const_boot_args(pfinder)) != 0) {
-					printf("const_boot_args: " KADDR_FMT "\n", const_boot_args);
-					if((lowglo_ptr = pfinder_lowglo_ptr(pfinder)) != 0) {
-						printf("lowglo_ptr: " KADDR_FMT "\n", lowglo_ptr);
-						ret = KERN_SUCCESS;
+	if((boot_path = get_boot_path()) != NULL) {
+		printf("boot_path: %s\n", boot_path);
+		if(pfinder_init_file(&pfinder, BOOT_PATH) == KERN_SUCCESS) {
+			if(pfinder_init_kbase(&pfinder) == KERN_SUCCESS && (kernproc = pfinder_kernproc(pfinder)) != 0) {
+				printf("kernproc: " KADDR_FMT "\n", kernproc);
+				if((pv_head_table_ptr = pfinder_pv_head_table_ptr(pfinder)) != 0) {
+					printf("pv_head_table_ptr: " KADDR_FMT "\n", pv_head_table_ptr);
+					if((const_boot_args = pfinder_const_boot_args(pfinder)) != 0) {
+						printf("const_boot_args: " KADDR_FMT "\n", const_boot_args);
+						if((lowglo_ptr = pfinder_lowglo_ptr(pfinder)) != 0) {
+							printf("lowglo_ptr: " KADDR_FMT "\n", lowglo_ptr);
+							ret = KERN_SUCCESS;
+						}
 					}
 				}
 			}
+			pfinder_term(&pfinder);
 		}
-		pfinder_term(&pfinder);
+		free(boot_path);
 	}
 	return ret;
 }

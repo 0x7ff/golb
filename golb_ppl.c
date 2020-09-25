@@ -38,6 +38,7 @@
 #define IPC_PORT_IP_KOBJECT_OFF (0x68)
 #define PROC_P_LIST_LH_FIRST_OFF (0x0)
 #define IO_MEMORY_MAP_F_ADDR_OFF (0x28)
+#define PREBOOT_PATH "/private/preboot/"
 #define IPC_SPACE_IS_TABLE_SZ_OFF (0x14)
 #define IO_SERVICE_F_PROP_TABLE_OFF (0x20)
 #define OS_DICTIONARY_DICT_ENTRY_OFF (0x20)
@@ -393,7 +394,7 @@ pfinder_init_file(pfinder_t *pfinder, const char *filename) {
 
 	pfinder_reset(pfinder);
 	if((fd = open(filename, O_RDONLY | O_CLOEXEC)) != -1) {
-		if(fstat(fd, &stat_buf) != -1 && stat_buf.st_size > 0) {
+		if(fstat(fd, &stat_buf) != -1 && S_ISREG(stat_buf.st_mode) && stat_buf.st_size > 0) {
 			len = (size_t)stat_buf.st_size;
 			if((m = mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, 0)) != MAP_FAILED) {
 				if((pfinder->data = kdecompress(m, len, &pfinder->kernel_sz)) != NULL && pfinder->kernel_sz > sizeof(fh) + sizeof(mh64)) {
@@ -633,10 +634,44 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 	return KERN_FAILURE;
 }
 
+static char *
+get_boot_path(void) {
+	int fd = open(PREBOOT_PATH "active", O_RDONLY | O_CLOEXEC);
+	size_t hash_len, path_len = sizeof(BOOT_PATH);
+	struct stat stat_buf;
+	char *path = NULL;
+	ssize_t n;
+
+	if(fd != -1) {
+		if(fstat(fd, &stat_buf) != -1 && S_ISREG(stat_buf.st_mode) && stat_buf.st_size > 0) {
+			hash_len = (size_t)stat_buf.st_size;
+			path_len += strlen(PREBOOT_PATH) + hash_len;
+			if((path = malloc(path_len)) != NULL) {
+				if((n = read(fd, path + strlen(PREBOOT_PATH), hash_len)) > 0 && (size_t)n == hash_len) {
+					memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
+				} else {
+					free(path);
+					path = NULL;
+				}
+			}
+		}
+		close(fd);
+	}
+	if(path == NULL) {
+		path_len = sizeof(BOOT_PATH);
+		path = malloc(path_len);
+	}
+	if(path != NULL) {
+		memcpy(path + (path_len - sizeof(BOOT_PATH)), BOOT_PATH, sizeof(BOOT_PATH));
+	}
+	return path;
+}
+
 static kern_return_t
 pfinder_init_offsets(void) {
 	kern_return_t ret = KERN_FAILURE;
 	pfinder_t pfinder;
+	char *boot_path;
 
 	task_map_off = 0x20;
 	proc_task_off = 0x18;
@@ -670,15 +705,19 @@ pfinder_init_offsets(void) {
 			}
 		}
 	}
-	if(pfinder_init_file(&pfinder, BOOT_PATH) == KERN_SUCCESS) {
-		if(pfinder_init_kbase(&pfinder) == KERN_SUCCESS && (kernproc = pfinder_kernproc(pfinder)) != 0) {
-			printf("kernproc: " KADDR_FMT "\n", kernproc);
-			if((lowglo_ptr = pfinder_lowglo_ptr(pfinder)) != 0) {
-				printf("lowglo_ptr: " KADDR_FMT "\n", lowglo_ptr);
-				ret = KERN_SUCCESS;
+	if((boot_path = get_boot_path()) != NULL) {
+		printf("boot_path: %s\n", boot_path);
+		if(pfinder_init_file(&pfinder, boot_path) == KERN_SUCCESS) {
+			if(pfinder_init_kbase(&pfinder) == KERN_SUCCESS && (kernproc = pfinder_kernproc(pfinder)) != 0) {
+				printf("kernproc: " KADDR_FMT "\n", kernproc);
+				if((lowglo_ptr = pfinder_lowglo_ptr(pfinder)) != 0) {
+					printf("lowglo_ptr: " KADDR_FMT "\n", lowglo_ptr);
+					ret = KERN_SUCCESS;
+				}
 			}
+			pfinder_term(&pfinder);
 		}
-		pfinder_term(&pfinder);
+		free(boot_path);
 	}
 	return ret;
 }

@@ -147,11 +147,6 @@ init_arm_globals(void) {
 				pmgr_aes0_ps_off = 0xE0201E8;
 				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_TWISTER:
-				aes_ap_v2 = true;
-				aes_ap_base_off = 0xA108000;
-				pmgr_aes0_ps_off = 0xE080210;
-				pmgr_security_base_off = 0x102D0000;
-				return KERN_SUCCESS;
 			case CPUFAMILY_ARM_HURRICANE:
 				aes_ap_v2 = true;
 #if defined(TARGET_OS_BRIDGE) && TARGET_OS_BRIDGE == 1
