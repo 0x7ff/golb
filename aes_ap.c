@@ -15,6 +15,7 @@
 #include "golb.h"
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <sys/utsname.h>
 
 #define IO_BASE (0x200000000ULL)
 
@@ -135,47 +136,60 @@ static kern_return_t
 init_arm_globals(void) {
 	uint32_t cpufamily = CPUFAMILY_UNKNOWN;
 	size_t len = sizeof(cpufamily);
+	struct utsname uts;
 
-	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0) {
+	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0 && uname(&uts) == 0) {
 		switch(cpufamily) {
-			case CPUFAMILY_ARM_CYCLONE:
+			case 0x37A09642U: /* CPUFAMILY_ARM_CYCLONE */
 				aes_ap_base_off = 0xA108000;
 				pmgr_aes0_ps_off = 0xE020100;
 				return KERN_SUCCESS;
-			case CPUFAMILY_ARM_TYPHOON:
+			case 0x2C91A47EU: /* CPUFAMILY_ARM_TYPHOON */
 				aes_ap_base_off = 0xA108000;
 				pmgr_aes0_ps_off = 0xE0201E8;
 				return KERN_SUCCESS;
-			case CPUFAMILY_ARM_TWISTER:
-			case CPUFAMILY_ARM_HURRICANE:
+			case 0x92FB37C8U: /* CPUFAMILY_ARM_TWISTER */
+			case 0x67CEEE93U: /* CPUFAMILY_ARM_HURRICANE */
 				aes_ap_v2 = true;
-#if defined(TARGET_OS_BRIDGE) && TARGET_OS_BRIDGE == 1
-				aes_ap_base_off = 0xA008000;
-				pmgr_aes0_ps_off = 0xE080238;
-				pmgr_security_base_off = 0x112D0000;
-#else
-				aes_ap_base_off = 0xA108000;
-				pmgr_aes0_ps_off = 0xE080220;
-				pmgr_security_base_off = 0x102D0000;
-#endif
+				if(strstr(uts.machine, "iBridge2,") != NULL) {
+					aes_ap_base_off = 0xA008000;
+					pmgr_aes0_ps_off = 0xE080238;
+					pmgr_security_base_off = 0x112D0000;
+				} else {
+					aes_ap_base_off = 0xA108000;
+					if(strstr(uts.version, "T8011") != NULL) {
+						pmgr_aes0_ps_off = 0xE080228;
+					} else if(strstr(uts.version, "S8001") != NULL) {
+						pmgr_aes0_ps_off = 0xE080218;
+					} else {
+						pmgr_aes0_ps_off = 0xE080220;
+					}
+					pmgr_security_base_off = 0x102D0000;
+				}
 				return KERN_SUCCESS;
-			case CPUFAMILY_ARM_MONSOON_MISTRAL:
+			case 0xE81E7EF6U: /* CPUFAMILY_ARM_MONSOON_MISTRAL */
 				aes_ap_v2 = true;
 				aes_ap_base_off = 0x2E008000;
 				pmgr_aes0_ps_off = 0x32080240;
 				pmgr_security_base_off = 0x352D0000;
 				return KERN_SUCCESS;
 #ifdef __arm64e__
-			case CPUFAMILY_ARM_VORTEX_TEMPEST:
+			case 0x07D34B9FU: /* CPUFAMILY_ARM_VORTEX_TEMPEST */
 				aes_ap_v2 = true;
 				aes_ap_base_off = 0x35008000;
 				pmgr_aes0_ps_off = 0x3B080228;
 				pmgr_security_base_off = 0x3D2D0000;
 				return KERN_SUCCESS;
-			case CPUFAMILY_ARM_LIGHTNING_THUNDER:
+			case 0x462504D2U: /* CPUFAMILY_ARM_LIGHTNING_THUNDER */
 				aes_ap_v2 = true;
 				aes_ap_base_off = 0x35008000;
 				pmgr_aes0_ps_off = 0x3B0801D8;
+				pmgr_security_base_off = 0x3D2D0000;
+				return KERN_SUCCESS;
+			case 0x1B588BB3U: /* CPUFAMILY_ARM_FIRESTORM_ICESTORM */
+				aes_ap_v2 = true;
+				aes_ap_base_off = 0x3500C000;
+				pmgr_aes0_ps_off = 0x3B700238;
 				pmgr_security_base_off = 0x3D2D0000;
 				return KERN_SUCCESS;
 #endif
