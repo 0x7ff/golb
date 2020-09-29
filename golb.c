@@ -285,13 +285,13 @@ init_arm_pgshift(void) {
 
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0) {
 		switch(cpufamily) {
-			case CPUFAMILY_ARM_CYCLONE:
-			case CPUFAMILY_ARM_TYPHOON:
+			case 0x37A09642U: /* CPUFAMILY_ARM_CYCLONE */
+			case 0x2C91A47EU: /* CPUFAMILY_ARM_TYPHOON */
 				arm_pgshift = ARM_PGSHIFT_4K;
 				return KERN_SUCCESS;
-			case CPUFAMILY_ARM_TWISTER:
-			case CPUFAMILY_ARM_HURRICANE:
-			case CPUFAMILY_ARM_MONSOON_MISTRAL:
+			case 0x92FB37C8U: /* CPUFAMILY_ARM_TWISTER */
+			case 0x67CEEE93U: /* CPUFAMILY_ARM_HURRICANE */
+			case 0xE81E7EF6U: /* CPUFAMILY_ARM_MONSOON_MISTRAL */
 				arm_pgshift = ARM_PGSHIFT_16K;
 				return KERN_SUCCESS;
 			default:
@@ -801,7 +801,7 @@ pfinder_init_offsets(void) {
 	}
 	if((boot_path = get_boot_path()) != NULL) {
 		printf("boot_path: %s\n", boot_path);
-		if(pfinder_init_file(&pfinder, BOOT_PATH) == KERN_SUCCESS) {
+		if(pfinder_init_file(&pfinder, boot_path) == KERN_SUCCESS) {
 			if(pfinder_init_kbase(&pfinder) == KERN_SUCCESS && (kernproc = pfinder_kernproc(pfinder)) != 0) {
 				printf("kernproc: " KADDR_FMT "\n", kernproc);
 				if((pv_head_table_ptr = pfinder_pv_head_table_ptr(pfinder)) != 0) {
