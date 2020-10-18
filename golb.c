@@ -75,6 +75,7 @@
 #define ARM_PTE_NX (0x40000000000000ULL)
 #define ARM_PTE_PNX (0x20000000000000ULL)
 #define ADD_X_IMM(a) extract32(a, 10, 12)
+#define kIODeviceTreePlane "IODeviceTree"
 #define PVH_FLAG_PPL_HASHED (1ULL << 58U)
 #define KCOMP_HDR_TYPE_LZSS (0x6C7A7373U)
 #define LOWGLO_LAYOUT_MAGIC (0xC0DEC0DEU)
@@ -726,26 +727,29 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 
 static char *
 get_boot_path(void) {
-	int fd = open(PREBOOT_PATH "active", O_RDONLY | O_CLOEXEC);
 	size_t hash_len, path_len = sizeof(BOOT_PATH);
+	io_registry_entry_t chosen;
 	struct stat stat_buf;
+	const uint8_t *hash;
+	CFDataRef hash_cf;
 	char *path = NULL;
-	ssize_t n;
 
-	if(fd != -1) {
-		if(fstat(fd, &stat_buf) != -1 && S_ISREG(stat_buf.st_mode) && stat_buf.st_size > 0) {
-			hash_len = (size_t)stat_buf.st_size;
-			path_len += strlen(PREBOOT_PATH) + hash_len;
-			if((path = malloc(path_len)) != NULL) {
-				if((n = read(fd, path + strlen(PREBOOT_PATH), hash_len)) > 0 && (size_t)n == hash_len) {
-					memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
-				} else {
-					free(path);
-					path = NULL;
+	if(stat(PREBOOT_PATH, &stat_buf) != -1 && S_ISDIR(stat_buf.st_mode)) {
+		if((chosen = IORegistryEntryFromPath(kIOMasterPortDefault, kIODeviceTreePlane ":/chosen")) != IO_OBJECT_NULL) {
+			if((hash_cf = IORegistryEntryCreateCFProperty(chosen, CFSTR("boot-manifest-hash"), kCFAllocatorDefault, kNilOptions)) != NULL) {
+				if(CFGetTypeID(hash_cf) == CFDataGetTypeID() && (hash_len = (size_t)CFDataGetLength(hash_cf) << 1U) != 0) {
+					path_len += strlen(PREBOOT_PATH) + hash_len;
+					if((path = malloc(path_len)) != NULL) {
+						memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
+						for(hash = CFDataGetBytePtr(hash_cf); hash_len-- != 0; ) {
+							path[strlen(PREBOOT_PATH) + hash_len] = "0123456789ABCDEF"[(hash[hash_len >> 1U] >> ((~hash_len & 1U) << 2U)) & 0xFU];
+						}
+					}
 				}
+				CFRelease(hash_cf);
 			}
+			IOObjectRelease(chosen);
 		}
-		close(fd);
 	}
 	if(path == NULL) {
 		path_len = sizeof(BOOT_PATH);

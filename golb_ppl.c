@@ -64,7 +64,6 @@
 #define IS_NOP(a) ((a) == 0xD503201FU)
 #define ADRP_ADDR(a) ((a) & ~0xFFFULL)
 #define ADRP_IMM(a) (ADR_IMM(a) << 12U)
-#define IO_OBJECT_NULL ((io_object_t)0)
 #define ADD_X_IMM(a) extract32(a, 10, 12)
 #define kIODeviceTreePlane "IODeviceTree"
 #define KCOMP_HDR_TYPE_LZSS (0x6C7A7373U)
@@ -94,10 +93,7 @@
 #	define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
-typedef char io_name_t[128];
-typedef mach_port_t io_object_t;
-typedef uint32_t IOOptionBits, ipc_entry_num_t;
-typedef io_object_t io_service_t, io_iterator_t, io_registry_entry_t;
+typedef uint32_t ipc_entry_num_t;
 
 typedef struct {
 	struct section_64 s64;
@@ -133,23 +129,6 @@ typedef struct {
 	uint8_t ver_code[8];
 	kaddr_t zero, stext, ver, os_ver, kmod_ptr, trans_off, reboot_flag, manual_pkt_addr, alt_debugger, pmap_memq, pmap_mem_page_off, pmap_mem_chain_off, static_addr, static_sz, layout_major_ver, layout_magic, pmap_mem_start_addr, pmap_mem_end_addr, pmap_mem_page_sz, pmap_mem_from_array_mask, pmap_mem_first_ppnum, pmap_mem_packed_shift, pmap_mem_packed_base_addr, layout_minor_ver, page_shift;
 } lowglo_t;
-
-kern_return_t
-IOObjectRelease(io_object_t);
-
-io_object_t
-IOIteratorNext(io_iterator_t);
-
-kern_return_t
-IORegistryCreateIterator(mach_port_t, const io_name_t, IOOptionBits, io_iterator_t *);
-
-CFTypeRef
-IORegistryEntryCreateCFProperty(io_registry_entry_t, CFStringRef, CFAllocatorRef, IOOptionBits);
-
-kern_return_t
-mach_vm_remap(vm_map_t, mach_vm_address_t *, mach_vm_size_t, mach_vm_offset_t, int, vm_map_t, mach_vm_address_t, boolean_t, vm_prot_t *, vm_prot_t *, vm_inherit_t);
-
-extern const mach_port_t kIOMasterPortDefault;
 
 static lowglo_t lowglo;
 static task_t tfp0 = MACH_PORT_NULL;
@@ -636,26 +615,29 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 
 static char *
 get_boot_path(void) {
-	int fd = open(PREBOOT_PATH "active", O_RDONLY | O_CLOEXEC);
 	size_t hash_len, path_len = sizeof(BOOT_PATH);
+	io_registry_entry_t chosen;
 	struct stat stat_buf;
+	const uint8_t *hash;
+	CFDataRef hash_cf;
 	char *path = NULL;
-	ssize_t n;
 
-	if(fd != -1) {
-		if(fstat(fd, &stat_buf) != -1 && S_ISREG(stat_buf.st_mode) && stat_buf.st_size > 0) {
-			hash_len = (size_t)stat_buf.st_size;
-			path_len += strlen(PREBOOT_PATH) + hash_len;
-			if((path = malloc(path_len)) != NULL) {
-				if((n = read(fd, path + strlen(PREBOOT_PATH), hash_len)) > 0 && (size_t)n == hash_len) {
-					memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
-				} else {
-					free(path);
-					path = NULL;
+	if(stat(PREBOOT_PATH, &stat_buf) != -1 && S_ISDIR(stat_buf.st_mode)) {
+		if((chosen = IORegistryEntryFromPath(kIOMasterPortDefault, kIODeviceTreePlane ":/chosen")) != IO_OBJECT_NULL) {
+			if((hash_cf = IORegistryEntryCreateCFProperty(chosen, CFSTR("boot-manifest-hash"), kCFAllocatorDefault, kNilOptions)) != NULL) {
+				if(CFGetTypeID(hash_cf) == CFDataGetTypeID() && (hash_len = (size_t)CFDataGetLength(hash_cf) << 1U) != 0) {
+					path_len += strlen(PREBOOT_PATH) + hash_len;
+					if((path = malloc(path_len)) != NULL) {
+						memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
+						for(hash = CFDataGetBytePtr(hash_cf); hash_len-- != 0; ) {
+							path[strlen(PREBOOT_PATH) + hash_len] = "0123456789ABCDEF"[(hash[hash_len >> 1U] >> ((~hash_len & 1U) << 2U)) & 0xFU];
+						}
+					}
 				}
+				CFRelease(hash_cf);
 			}
+			IOObjectRelease(chosen);
 		}
-		close(fd);
 	}
 	if(path == NULL) {
 		path_len = sizeof(BOOT_PATH);
