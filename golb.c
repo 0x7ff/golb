@@ -30,9 +30,10 @@
 #define VM_MAP_HDR_RBH_ROOT_OFF (0x38)
 #define PROC_P_LIST_LH_FIRST_OFF (0x0)
 #define PREBOOT_PATH "/private/preboot/"
+#define LOADED_KEXT_SUMMARY_HDR_NAME_OFF (0x10)
+#define LOADED_KEXT_SUMMARY_HDR_ADDR_OFF (0x60)
 #define kCFCoreFoundationVersionNumber_iOS_13_0_b2 (1656)
 #define kCFCoreFoundationVersionNumber_iOS_14_0_b1 (1740)
-#define kCFCoreFoundationVersionNumber_iOS_11_0_b1 (1429.15)
 #define kCFCoreFoundationVersionNumber_iOS_12_0_b1 (1535.13)
 #define kCFCoreFoundationVersionNumber_iOS_13_0_b1 (1652.20)
 #define kCFCoreFoundationVersionNumber_iOS_13_2_b1 (1673.12)
@@ -52,18 +53,17 @@
 #define DER_OCTET_STR (0x4U)
 #define ARM_PGSHIFT_4K (12U)
 #define ARM_PGSHIFT_16K (14U)
-#define VM_KERN_MEMORY_CPU (9)
 #define ARM64_VMADDR_BITS (48U)
 #define ARM_PTE_TYPE_VALID (3U)
 #define RD(a) extract32(a, 0, 5)
 #define RN(a) extract32(a, 5, 5)
 #define ARM_PTE_AP(a) ((a) << 6U)
+#define VM_KERN_MEMORY_OSKEXT (5)
 #define PVH_FLAG_CPU (1ULL << 62U)
 #define LOWGLO_VER_CODE "Kraken  "
 #define PVH_FLAG_EXEC (1ULL << 60U)
 #define CACHE_ATTRINDX_DISABLE (3U)
 #define KCOMP_HDR_MAGIC (0x636F6D70U)
-#define IS_NOP(a) ((a) == 0xD503201FU)
 #define ADRP_ADDR(a) ((a) & ~0xFFFULL)
 #define PVH_LIST_MASK (~PVH_TYPE_MASK)
 #define VM_MAP_FLAGS_NO_ZERO_FILL (4U)
@@ -82,6 +82,7 @@
 #define FAULT_MAGIC (0xAAAAAAAAAAAAAAAAULL)
 #define PVH_FLAG_LOCK (1ULL << PVH_LOCK_BIT)
 #define LDR_X_IMM(a) (sextract64(a, 5, 19) << 2U)
+#define kOSBundleLoadAddressKey "OSBundleLoadAddress"
 #define IS_ADR(a) (((a) & 0x9F000000U) == 0x10000000U)
 #define IS_ADRP(a) (((a) & 0x9F000000U) == 0x90000000U)
 #define IS_CBZ_W(a) (((a) & 0xFF000000U) == 0x34000000U)
@@ -154,7 +155,7 @@ static unsigned arm_pgshift;
 static boot_args_t boot_args;
 static task_t tfp0 = MACH_PORT_NULL;
 static kaddr_t pvh_high_flags, kernproc, pv_head_table_ptr, const_boot_args, lowglo_ptr, pv_head_table, our_map, our_pmap;
-static size_t task_map_off, proc_task_off, proc_p_pid_off, pmap_sw_asid_off, vm_map_flags_off, cpu_data_rtclock_datap_off;
+static size_t task_map_off, proc_task_off, proc_p_pid_off, pmap_sw_asid_off, vm_map_flags_off;
 
 static uint32_t
 extract32(uint32_t val, unsigned start, unsigned len) {
@@ -611,22 +612,6 @@ pfinder_sym(pfinder_t pfinder, const char *sym) {
 }
 
 static kaddr_t
-pfinder_rtclock_data(pfinder_t pfinder) {
-	kaddr_t ref = pfinder_sym(pfinder, "_RTClockData");
-	uint32_t insns[3];
-
-	if(ref != 0) {
-		return ref;
-	}
-	for(ref = pfinder_xref_str(pfinder, "assert_wait_timeout_with_leeway", 8); sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
-		if(IS_ADRP(insns[0]) && IS_NOP(insns[1]) && IS_LDR_W_UNSIGNED_IMM(insns[2])) {
-			return pfinder_xref_rd(pfinder, RD(insns[2]), ref, 0);
-		}
-	}
-	return 0;
-}
-
-static kaddr_t
 pfinder_kernproc(pfinder_t pfinder) {
 	kaddr_t ref = pfinder_sym(pfinder, "_kernproc");
 	uint32_t insns[2];
@@ -691,24 +676,43 @@ pfinder_lowglo_ptr(pfinder_t pfinder) {
 static kaddr_t
 pfinder_init_kbase(pfinder_t *pfinder) {
 	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
-	kaddr_t addr, rtclock_data, rtclock_data_slid;
 	vm_region_extended_info_data_t extended_info;
+	kaddr_t addr, kext_addr, kext_addr_slid;
+	CFDictionaryRef kexts_info, kext_info;
 	task_dyld_info_data_t dyld_info;
+	char kext_name[KMOD_MAX_NAME];
 	struct mach_header_64 mh64;
+	CFStringRef kext_name_cf;
+	CFNumberRef kext_addr_cf;
 	mach_port_t object_name;
+	CFArrayRef kext_names;
 	mach_vm_size_t sz;
 
 	if(task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
 		pfinder->kslide = dyld_info.all_image_info_size;
 	}
-	if(pfinder->kslide == 0 && (rtclock_data = pfinder_rtclock_data(*pfinder)) != 0) {
-		printf("rtclock_data: " KADDR_FMT "\n", rtclock_data);
+	if(pfinder->kslide == 0) {
 		cnt = VM_REGION_EXTENDED_INFO_COUNT;
 		for(addr = 0; mach_vm_region(tfp0, &addr, &sz, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&extended_info, &cnt, &object_name) == KERN_SUCCESS; addr += sz) {
 			mach_port_deallocate(mach_task_self(), object_name);
-			if(extended_info.protection == VM_PROT_DEFAULT && extended_info.user_tag == VM_KERN_MEMORY_CPU) {
-				if(kread_addr(addr + cpu_data_rtclock_datap_off, &rtclock_data_slid) == KERN_SUCCESS && rtclock_data_slid > rtclock_data) {
-					pfinder->kslide = rtclock_data_slid - rtclock_data;
+			if(extended_info.protection == VM_PROT_READ && extended_info.user_tag == VM_KERN_MEMORY_OSKEXT) {
+				if(kread_buf(addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
+					printf("kext_name: %s\n", kext_name);
+					if(kread_addr(addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
+						printf("kext_addr_slid: " KADDR_FMT "\n", kext_addr_slid);
+						if((kext_name_cf = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, kext_name, kCFStringEncodingUTF8, kCFAllocatorNull)) != NULL) {
+							if((kext_names = CFArrayCreate(kCFAllocatorDefault, (const void **)&kext_name_cf, 1, &kCFTypeArrayCallBacks)) != NULL) {
+								if((kexts_info = OSKextCopyLoadedKextInfo(kext_names, NULL)) != NULL) {
+									if(CFGetTypeID(kexts_info) == CFDictionaryGetTypeID() && CFDictionaryGetCount(kexts_info) == 1 && (kext_info = CFDictionaryGetValue(kexts_info, kext_name_cf)) != NULL && CFGetTypeID(kext_info) == CFDictionaryGetTypeID() && (kext_addr_cf = CFDictionaryGetValue(kext_info, CFSTR(kOSBundleLoadAddressKey))) != NULL && CFGetTypeID(kext_addr_cf) == CFNumberGetTypeID() && CFNumberGetValue(kext_addr_cf, kCFNumberSInt64Type, &kext_addr) && kext_addr_slid > kext_addr) {
+										pfinder->kslide = kext_addr_slid - kext_addr;
+									}
+									CFRelease(kexts_info);
+								}
+								CFRelease(kext_names);
+							}
+							CFRelease(kext_name_cf);
+						}
+					}
 				}
 				break;
 			}
@@ -771,33 +775,24 @@ pfinder_init_offsets(void) {
 	task_map_off = 0x20;
 	proc_task_off = 0x18;
 	proc_p_pid_off = 0x10;
-	pmap_sw_asid_off = 0x24;
+	pmap_sw_asid_off = 0x28;
 	vm_map_flags_off = 0x110;
-	cpu_data_rtclock_datap_off = 0x1D8;
-	if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_11_0_b1) {
-		cpu_data_rtclock_datap_off = 0x1A8;
-		if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_12_0_b1) {
-			proc_task_off = 0x10;
-			proc_p_pid_off = 0x60;
-			pmap_sw_asid_off = 0xDC;
-			vm_map_flags_off = 0x10C;
-#ifdef __arm64e__
-			cpu_data_rtclock_datap_off = 0x190;
-#else
-			cpu_data_rtclock_datap_off = 0x198;
-#endif
-			pvh_high_flags = PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN;
-			if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b1) {
-				task_map_off = 0x28;
-				pmap_sw_asid_off = 0xEE;
-				if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b2) {
-					proc_p_pid_off = 0x68;
-					if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_2_b1) {
-						pmap_sw_asid_off = 0xE6;
-						if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_14_0_b1) {
-							pmap_sw_asid_off = 0xDE;
-							pvh_high_flags |= PVH_FLAG_PPL_HASHED;
-						}
+	if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_12_0_b1) {
+		proc_task_off = 0x10;
+		proc_p_pid_off = 0x60;
+		pmap_sw_asid_off = 0xDC;
+		vm_map_flags_off = 0x10C;
+		pvh_high_flags = PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN;
+		if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b1) {
+			task_map_off = 0x28;
+			pmap_sw_asid_off = 0xEE;
+			if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b2) {
+				proc_p_pid_off = 0x68;
+				if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_2_b1) {
+					pmap_sw_asid_off = 0xE6;
+					if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_14_0_b1) {
+						pmap_sw_asid_off = 0xDE;
+						pvh_high_flags |= PVH_FLAG_PPL_HASHED;
 					}
 				}
 			}

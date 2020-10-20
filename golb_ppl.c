@@ -44,6 +44,8 @@
 #define OS_DICTIONARY_DICT_ENTRY_OFF (0x20)
 #define IO_DEVICE_MEMORY_MAPPINGS_OFF (0x18)
 #define OS_STRING_LEN(a) extract32(a, 14, 18)
+#define LOADED_KEXT_SUMMARY_HDR_NAME_OFF (0x10)
+#define LOADED_KEXT_SUMMARY_HDR_ADDR_OFF (0x60)
 #define kCFCoreFoundationVersionNumber_iOS_10_0_b5 (1348)
 #define kCFCoreFoundationVersionNumber_iOS_13_0_b2 (1656)
 #define kCFCoreFoundationVersionNumber_iOS_14_0_b1 (1740)
@@ -56,12 +58,11 @@
 #define DER_SEQ (0x30U)
 #define DER_IA5_STR (0x16U)
 #define DER_OCTET_STR (0x4U)
-#define VM_KERN_MEMORY_CPU (9)
 #define RD(a) extract32(a, 0, 5)
 #define RN(a) extract32(a, 5, 5)
+#define VM_KERN_MEMORY_OSKEXT (5)
 #define LOWGLO_VER_CODE "Kraken  "
 #define KCOMP_HDR_MAGIC (0x636F6D70U)
-#define IS_NOP(a) ((a) == 0xD503201FU)
 #define ADRP_ADDR(a) ((a) & ~0xFFFULL)
 #define ADRP_IMM(a) (ADR_IMM(a) << 12U)
 #define ADD_X_IMM(a) extract32(a, 10, 12)
@@ -71,6 +72,7 @@
 #define kIORegistryIterateRecursively (1U)
 #define kIODeviceMemoryKey "IODeviceMemory"
 #define LDR_X_IMM(a) (sextract64(a, 5, 19) << 2U)
+#define kOSBundleLoadAddressKey "OSBundleLoadAddress"
 #define IS_ADR(a) (((a) & 0x9F000000U) == 0x10000000U)
 #define IS_ADRP(a) (((a) & 0x9F000000U) == 0x90000000U)
 #define IS_ADD_X(a) (((a) & 0xFFC00000U) == 0x91000000U)
@@ -133,7 +135,7 @@ typedef struct {
 static lowglo_t lowglo;
 static task_t tfp0 = MACH_PORT_NULL;
 static kaddr_t kernproc, lowglo_ptr, our_task, our_map;
-static size_t task_map_off, proc_task_off, proc_p_pid_off, task_itk_space_off, cpu_data_rtclock_datap_off;
+static size_t task_map_off, proc_task_off, proc_p_pid_off, task_itk_space_off;
 
 static uint32_t
 extract32(uint32_t val, unsigned start, unsigned len) {
@@ -531,22 +533,6 @@ pfinder_sym(pfinder_t pfinder, const char *sym) {
 }
 
 static kaddr_t
-pfinder_rtclock_data(pfinder_t pfinder) {
-	kaddr_t ref = pfinder_sym(pfinder, "_RTClockData");
-	uint32_t insns[3];
-
-	if(ref != 0) {
-		return ref;
-	}
-	for(ref = pfinder_xref_str(pfinder, "assert_wait_timeout_with_leeway", 8); sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
-		if(IS_ADRP(insns[0]) && IS_NOP(insns[1]) && IS_LDR_W_UNSIGNED_IMM(insns[2])) {
-			return pfinder_xref_rd(pfinder, RD(insns[2]), ref, 0);
-		}
-	}
-	return 0;
-}
-
-static kaddr_t
 pfinder_kernproc(pfinder_t pfinder) {
 	kaddr_t ref = pfinder_sym(pfinder, "_kernproc");
 	uint32_t insns[2];
@@ -580,24 +566,43 @@ pfinder_lowglo_ptr(pfinder_t pfinder) {
 static kaddr_t
 pfinder_init_kbase(pfinder_t *pfinder) {
 	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
-	kaddr_t addr, rtclock_data, rtclock_data_slid;
 	vm_region_extended_info_data_t extended_info;
+	kaddr_t addr, kext_addr, kext_addr_slid;
+	CFDictionaryRef kexts_info, kext_info;
 	task_dyld_info_data_t dyld_info;
+	char kext_name[KMOD_MAX_NAME];
 	struct mach_header_64 mh64;
+	CFStringRef kext_name_cf;
+	CFNumberRef kext_addr_cf;
 	mach_port_t object_name;
+	CFArrayRef kext_names;
 	mach_vm_size_t sz;
 
 	if(task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
 		pfinder->kslide = dyld_info.all_image_info_size;
 	}
-	if(pfinder->kslide == 0 && (rtclock_data = pfinder_rtclock_data(*pfinder)) != 0) {
-		printf("rtclock_data: " KADDR_FMT "\n", rtclock_data);
+	if(pfinder->kslide == 0) {
 		cnt = VM_REGION_EXTENDED_INFO_COUNT;
 		for(addr = 0; mach_vm_region(tfp0, &addr, &sz, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&extended_info, &cnt, &object_name) == KERN_SUCCESS; addr += sz) {
 			mach_port_deallocate(mach_task_self(), object_name);
-			if(extended_info.protection == VM_PROT_DEFAULT && extended_info.user_tag == VM_KERN_MEMORY_CPU) {
-				if(kread_addr(addr + cpu_data_rtclock_datap_off, &rtclock_data_slid) == KERN_SUCCESS && rtclock_data_slid > rtclock_data) {
-					pfinder->kslide = rtclock_data_slid - rtclock_data;
+			if(extended_info.protection == VM_PROT_READ && extended_info.user_tag == VM_KERN_MEMORY_OSKEXT) {
+				if(kread_buf(addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
+					printf("kext_name: %s\n", kext_name);
+					if(kread_addr(addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
+						printf("kext_addr_slid: " KADDR_FMT "\n", kext_addr_slid);
+						if((kext_name_cf = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, kext_name, kCFStringEncodingUTF8, kCFAllocatorNull)) != NULL) {
+							if((kext_names = CFArrayCreate(kCFAllocatorDefault, (const void **)&kext_name_cf, 1, &kCFTypeArrayCallBacks)) != NULL) {
+								if((kexts_info = OSKextCopyLoadedKextInfo(kext_names, NULL)) != NULL) {
+									if(CFGetTypeID(kexts_info) == CFDictionaryGetTypeID() && CFDictionaryGetCount(kexts_info) == 1 && (kext_info = CFDictionaryGetValue(kexts_info, kext_name_cf)) != NULL && CFGetTypeID(kext_info) == CFDictionaryGetTypeID() && (kext_addr_cf = CFDictionaryGetValue(kext_info, CFSTR(kOSBundleLoadAddressKey))) != NULL && CFGetTypeID(kext_addr_cf) == CFNumberGetTypeID() && CFNumberGetValue(kext_addr_cf, kCFNumberSInt64Type, &kext_addr) && kext_addr_slid > kext_addr) {
+										pfinder->kslide = kext_addr_slid - kext_addr;
+									}
+									CFRelease(kexts_info);
+								}
+								CFRelease(kext_names);
+							}
+							CFRelease(kext_name_cf);
+						}
+					}
 				}
 				break;
 			}
@@ -659,21 +664,14 @@ pfinder_init_offsets(void) {
 	proc_task_off = 0x18;
 	proc_p_pid_off = 0x10;
 	task_itk_space_off = 0x290;
-	cpu_data_rtclock_datap_off = 0x1D8;
 	if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_10_0_b5) {
 		task_itk_space_off = 0x300;
 		if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_11_0_b1) {
 			task_itk_space_off = 0x308;
-			cpu_data_rtclock_datap_off = 0x1A8;
 			if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_12_0_b1) {
 				proc_task_off = 0x10;
 				proc_p_pid_off = 0x60;
 				task_itk_space_off = 0x300;
-#ifdef __arm64e__
-				cpu_data_rtclock_datap_off = 0x190;
-#else
-				cpu_data_rtclock_datap_off = 0x198;
-#endif
 				if(kCFCoreFoundationVersionNumber >= kCFCoreFoundationVersionNumber_iOS_13_0_b1) {
 					task_map_off = 0x28;
 					task_itk_space_off = 0x320;

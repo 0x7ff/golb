@@ -30,6 +30,9 @@ IOObjectRelease(io_object_t);
 io_object_t
 IOIteratorNext(io_iterator_t);
 
+CFDictionaryRef
+OSKextCopyLoadedKextInfo(CFArrayRef, CFArrayRef);
+
 io_registry_entry_t
 IORegistryEntryFromPath(mach_port_t, const io_string_t);
 
