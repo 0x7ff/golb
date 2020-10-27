@@ -936,6 +936,7 @@ get_kvirt_from_serv(io_service_t serv, uint32_t range_idx, kaddr_t *kvirt) {
 
 void
 golb_term(void) {
+	setpriority(PRIO_PROCESS, 0, 0);
 	mach_port_deallocate(mach_task_self(), tfp0);
 }
 
@@ -947,7 +948,9 @@ golb_init(void) {
 			printf("our_task: " KADDR_FMT "\n", our_task);
 			if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
 				printf("our_map: " KADDR_FMT "\n", our_map);
-				return KERN_SUCCESS;
+				if(setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1) {
+					return KERN_SUCCESS;
+				}
 			}
 		}
 		mach_port_deallocate(mach_task_self(), tfp0);

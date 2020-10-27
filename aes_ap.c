@@ -23,6 +23,7 @@
 #define OP_KEY (1U)
 #define OP_DATA (5U)
 #define OP_FLAG (8U)
+#define DMB_SY (0xFU)
 #define KEY_LEN_128 (0U)
 #define KEY_LEN_192 (1U)
 #define KEY_LEN_256 (2U)
@@ -159,6 +160,8 @@ init_arm_globals(void) {
 					aes_ap_base_off = 0xA108000;
 					if(strstr(uts.version, "T8011") != NULL) {
 						pmgr_aes0_ps_off = 0xE080228;
+					} else if(strstr(uts.version, "T8010") != NULL) {
+						pmgr_aes0_ps_off = 0xE080230;
 					} else if(strstr(uts.version, "S8001") != NULL) {
 						pmgr_aes0_ps_off = 0xE080218;
 					} else {
@@ -370,6 +373,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 		do {
 			rPMGR_AES0_PS |= PMGR_PS_RUN_MAX;
 			while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
+			__builtin_arm_dmb(DMB_SY);
 			rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_CMD_UMASK;
 			rAES_CTRL = AES_BLK_CTRL_START_UMASK;
 			rAES_CMD_FIFO = key_cmd;
@@ -386,6 +390,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 			while((rAES_INT_STATUS & AES_BLK_INT_STATUS_FLAG_CMD_UMASK) == 0) {}
 			rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_CMD_UMASK;
 			status = rAES_INT_STATUS;
+			__builtin_arm_dmb(DMB_SY);
 			rAES_CTRL = AES_BLK_CTRL_STOP_UMASK;
 		} while(status != 0);
 		ret = KERN_SUCCESS;
@@ -474,6 +479,7 @@ aes_ap_file(const char *dir, const char *key_type, const char *in_filename, cons
 						}
 						printf("Wrote %zu bytes to file \"%s\".\n", buf_sz, out_filename);
 					} while((len -= buf_sz) != 0);
+					printf("Remaining bytes: %zu\n", len);
 					free(buf);
 				}
 				close(out_fd);

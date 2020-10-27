@@ -888,6 +888,7 @@ vm_page_get_phys_addr(kaddr_t vm_page) {
 
 void
 golb_term(void) {
+	setpriority(PRIO_PROCESS, 0, 0);
 	mach_port_deallocate(mach_task_self(), tfp0);
 }
 
@@ -909,7 +910,9 @@ golb_init(void) {
 							printf("our_map: " KADDR_FMT "\n", our_map);
 							if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
 								printf("our_pmap: " KADDR_FMT "\n", our_pmap);
-								return KERN_SUCCESS;
+								if(setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1) {
+									return KERN_SUCCESS;
+								}
 							}
 						}
 					}
