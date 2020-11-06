@@ -92,7 +92,6 @@
 #define rAES_AP_DIS (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x4))
 #define rPMGR_AES0_PS (*(volatile uint32_t *)(pmgr_aes0_ps_ctx.virt))
 #define rPMGR_SECURITY (*(volatile uint32_t *)pmgr_security_ctx.virt)
-#define rAES_CMD_FIFO (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x200))
 #define rAES_AP_IV_IN0 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x100))
 #define rAES_AP_IV_IN1 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x104))
 #define rAES_AP_IV_IN2 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x108))
@@ -111,10 +110,11 @@
 #define rAES_AP_TXT_IN_CTRL (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x8))
 #define rAES_AP_KEY_IN_CTRL (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x90))
 #define rAES_AP_TXT_OUT_STS (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x50))
+#define rAES_CMD_FIFO (*(volatile uint32_t *)(aes_ap_ctx.virt + aes_cmd_fifo_off))
 
 static bool aes_ap_v2;
 static golb_ctx_t aes_ap_ctx, pmgr_aes0_ps_ctx, pmgr_security_ctx;
-static kaddr_t aes_ap_base_off, pmgr_security_base_off, pmgr_aes0_ps_off;
+static kaddr_t aes_ap_base_off, pmgr_security_base_off, pmgr_aes0_ps_off, aes_cmd_fifo_off = 0x200;
 
 static struct {
 	uint32_t key_id, key[4], val[4];
@@ -165,6 +165,7 @@ init_arm_globals(void) {
 					} else if(strstr(uts.version, "S8001") != NULL) {
 						pmgr_aes0_ps_off = 0xE080218;
 					} else {
+						aes_cmd_fifo_off = 0x100;
 						pmgr_aes0_ps_off = 0xE080220;
 					}
 					pmgr_security_base_off = 0x102D0000;
