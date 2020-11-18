@@ -86,8 +86,8 @@
 #define IS_ADR(a) (((a) & 0x9F000000U) == 0x10000000U)
 #define IS_ADRP(a) (((a) & 0x9F000000U) == 0x90000000U)
 #define IS_CBZ_W(a) (((a) & 0xFF000000U) == 0x34000000U)
-#define IS_ADD_X(a) (((a) & 0xFFC00000U) == 0x91000000U)
 #define IS_LDR_X(a) (((a) & 0xFF000000U) == 0x58000000U)
+#define IS_ADD_X(a) (((a) & 0xFFC00000U) == 0x91000000U)
 #define IS_MOV_X(a) (((a) & 0xFFE00000U) == 0xAA000000U)
 #define LDR_W_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 2U)
 #define LDR_X_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 3U)
@@ -153,9 +153,11 @@ typedef struct {
 static lowglo_t lowglo;
 static unsigned arm_pgshift;
 static boot_args_t boot_args;
-static task_t tfp0 = MACH_PORT_NULL;
-static kaddr_t pvh_high_flags, kernproc, pv_head_table_ptr, const_boot_args, lowglo_ptr, pv_head_table, our_map, our_pmap;
+static kread_func_t kread_buf;
+static task_t tfp0 = TASK_NULL;
+static kwrite_func_t kwrite_buf;
 static size_t task_map_off, proc_task_off, proc_p_pid_off, pmap_sw_asid_off, vm_map_flags_off;
+static kaddr_t kslide, pvh_high_flags, kernproc, pv_head_table_ptr, const_boot_args, lowglo_ptr, pv_head_table, our_map, our_pmap;
 
 static uint32_t
 extract32(uint32_t val, unsigned start, unsigned len) {
@@ -327,7 +329,7 @@ init_tfp0(void) {
 }
 
 static kern_return_t
-kread_buf(kaddr_t addr, void *buf, mach_vm_size_t sz) {
+kread_buf_tfp0(kaddr_t addr, void *buf, mach_vm_size_t sz) {
 	mach_vm_address_t p = (mach_vm_address_t)buf;
 	mach_vm_size_t read_sz, out_sz = 0;
 
@@ -349,7 +351,7 @@ kread_addr(kaddr_t addr, kaddr_t *val) {
 }
 
 static kern_return_t
-kwrite_buf(kaddr_t addr, const void *buf, mach_msg_type_number_t sz) {
+kwrite_buf_tfp0(kaddr_t addr, const void *buf, mach_msg_type_number_t sz) {
 	vm_machine_attribute_val_t mattr_val = MATTR_VAL_CACHE_FLUSH;
 	mach_vm_address_t p = (mach_vm_address_t)buf;
 	mach_msg_type_number_t write_sz;
@@ -688,33 +690,35 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 	CFArrayRef kext_names;
 	mach_vm_size_t sz;
 
-	if(task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
-		pfinder->kslide = dyld_info.all_image_info_size;
-	}
 	if(pfinder->kslide == 0) {
-		cnt = VM_REGION_EXTENDED_INFO_COUNT;
-		for(addr = 0; mach_vm_region(tfp0, &addr, &sz, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&extended_info, &cnt, &object_name) == KERN_SUCCESS; addr += sz) {
-			mach_port_deallocate(mach_task_self(), object_name);
-			if(extended_info.protection == VM_PROT_READ && extended_info.user_tag == VM_KERN_MEMORY_OSKEXT) {
-				if(kread_buf(addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
-					printf("kext_name: %s\n", kext_name);
-					if(kread_addr(addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
-						printf("kext_addr_slid: " KADDR_FMT "\n", kext_addr_slid);
-						if((kext_name_cf = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, kext_name, kCFStringEncodingUTF8, kCFAllocatorNull)) != NULL) {
-							if((kext_names = CFArrayCreate(kCFAllocatorDefault, (const void **)&kext_name_cf, 1, &kCFTypeArrayCallBacks)) != NULL) {
-								if((kexts_info = OSKextCopyLoadedKextInfo(kext_names, NULL)) != NULL) {
-									if(CFGetTypeID(kexts_info) == CFDictionaryGetTypeID() && CFDictionaryGetCount(kexts_info) == 1 && (kext_info = CFDictionaryGetValue(kexts_info, kext_name_cf)) != NULL && CFGetTypeID(kext_info) == CFDictionaryGetTypeID() && (kext_addr_cf = CFDictionaryGetValue(kext_info, CFSTR(kOSBundleLoadAddressKey))) != NULL && CFGetTypeID(kext_addr_cf) == CFNumberGetTypeID() && CFNumberGetValue(kext_addr_cf, kCFNumberSInt64Type, &kext_addr) && kext_addr_slid > kext_addr) {
-										pfinder->kslide = kext_addr_slid - kext_addr;
+		if(task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
+			pfinder->kslide = dyld_info.all_image_info_size;
+		}
+		if(pfinder->kslide == 0) {
+			cnt = VM_REGION_EXTENDED_INFO_COUNT;
+			for(addr = 0; mach_vm_region(tfp0, &addr, &sz, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&extended_info, &cnt, &object_name) == KERN_SUCCESS; addr += sz) {
+				mach_port_deallocate(mach_task_self(), object_name);
+				if(extended_info.protection == VM_PROT_READ && extended_info.user_tag == VM_KERN_MEMORY_OSKEXT) {
+					if(kread_buf(addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
+						printf("kext_name: %s\n", kext_name);
+						if(kread_addr(addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
+							printf("kext_addr_slid: " KADDR_FMT "\n", kext_addr_slid);
+							if((kext_name_cf = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, kext_name, kCFStringEncodingUTF8, kCFAllocatorNull)) != NULL) {
+								if((kext_names = CFArrayCreate(kCFAllocatorDefault, (const void **)&kext_name_cf, 1, &kCFTypeArrayCallBacks)) != NULL) {
+									if((kexts_info = OSKextCopyLoadedKextInfo(kext_names, NULL)) != NULL) {
+										if(CFGetTypeID(kexts_info) == CFDictionaryGetTypeID() && CFDictionaryGetCount(kexts_info) == 1 && (kext_info = CFDictionaryGetValue(kexts_info, kext_name_cf)) != NULL && CFGetTypeID(kext_info) == CFDictionaryGetTypeID() && (kext_addr_cf = CFDictionaryGetValue(kext_info, CFSTR(kOSBundleLoadAddressKey))) != NULL && CFGetTypeID(kext_addr_cf) == CFNumberGetTypeID() && CFNumberGetValue(kext_addr_cf, kCFNumberSInt64Type, &kext_addr) && kext_addr_slid > kext_addr) {
+											pfinder->kslide = kext_addr_slid - kext_addr;
+										}
+										CFRelease(kexts_info);
 									}
-									CFRelease(kexts_info);
+									CFRelease(kext_names);
 								}
-								CFRelease(kext_names);
+								CFRelease(kext_name_cf);
 							}
-							CFRelease(kext_name_cf);
 						}
 					}
+					break;
 				}
-				break;
 			}
 		}
 	}
@@ -738,22 +742,20 @@ get_boot_path(void) {
 	CFDataRef hash_cf;
 	char *path = NULL;
 
-	if(stat(PREBOOT_PATH, &stat_buf) != -1 && S_ISDIR(stat_buf.st_mode)) {
-		if((chosen = IORegistryEntryFromPath(kIOMasterPortDefault, kIODeviceTreePlane ":/chosen")) != IO_OBJECT_NULL) {
-			if((hash_cf = IORegistryEntryCreateCFProperty(chosen, CFSTR("boot-manifest-hash"), kCFAllocatorDefault, kNilOptions)) != NULL) {
-				if(CFGetTypeID(hash_cf) == CFDataGetTypeID() && (hash_len = (size_t)CFDataGetLength(hash_cf) << 1U) != 0) {
-					path_len += strlen(PREBOOT_PATH) + hash_len;
-					if((path = malloc(path_len)) != NULL) {
-						memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
-						for(hash = CFDataGetBytePtr(hash_cf); hash_len-- != 0; ) {
-							path[strlen(PREBOOT_PATH) + hash_len] = "0123456789ABCDEF"[(hash[hash_len >> 1U] >> ((~hash_len & 1U) << 2U)) & 0xFU];
-						}
+	if(stat(PREBOOT_PATH, &stat_buf) != -1 && S_ISDIR(stat_buf.st_mode) && (chosen = IORegistryEntryFromPath(kIOMasterPortDefault, kIODeviceTreePlane ":/chosen")) != IO_OBJECT_NULL) {
+		if((hash_cf = IORegistryEntryCreateCFProperty(chosen, CFSTR("boot-manifest-hash"), kCFAllocatorDefault, kNilOptions)) != NULL) {
+			if(CFGetTypeID(hash_cf) == CFDataGetTypeID() && (hash_len = (size_t)CFDataGetLength(hash_cf) << 1U) != 0) {
+				path_len += strlen(PREBOOT_PATH) + hash_len;
+				if((path = malloc(path_len)) != NULL) {
+					memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
+					for(hash = CFDataGetBytePtr(hash_cf); hash_len-- != 0; ) {
+						path[strlen(PREBOOT_PATH) + hash_len] = "0123456789ABCDEF"[(hash[hash_len >> 1U] >> ((~hash_len & 1U) << 2U)) & 0xFU];
 					}
 				}
-				CFRelease(hash_cf);
 			}
-			IOObjectRelease(chosen);
+			CFRelease(hash_cf);
 		}
+		IOObjectRelease(chosen);
 	}
 	if(path == NULL) {
 		path_len = sizeof(BOOT_PATH);
@@ -801,6 +803,7 @@ pfinder_init_offsets(void) {
 	if((boot_path = get_boot_path()) != NULL) {
 		printf("boot_path: %s\n", boot_path);
 		if(pfinder_init_file(&pfinder, boot_path) == KERN_SUCCESS) {
+			pfinder.kslide = kslide;
 			if(pfinder_init_kbase(&pfinder) == KERN_SUCCESS && (kernproc = pfinder_kernproc(pfinder)) != 0) {
 				printf("kernproc: " KADDR_FMT "\n", kernproc);
 				if((pv_head_table_ptr = pfinder_pv_head_table_ptr(pfinder)) != 0) {
@@ -888,39 +891,45 @@ vm_page_get_phys_addr(kaddr_t vm_page) {
 
 void
 golb_term(void) {
+	if(tfp0 != TASK_NULL) {
+		mach_port_deallocate(mach_task_self(), tfp0);
+	}
 	setpriority(PRIO_PROCESS, 0, 0);
-	mach_port_deallocate(mach_task_self(), tfp0);
 }
 
 kern_return_t
-golb_init(void) {
+golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 	kaddr_t our_task;
 
-	if(init_arm_pgshift() == KERN_SUCCESS) {
+	kslide = _kslide;
+	if(_kread_buf != NULL && _kwrite_buf != NULL) {
+		kread_buf = _kread_buf;
+		kwrite_buf = _kwrite_buf;
+	} else if(init_tfp0() == KERN_SUCCESS) {
+		printf("tfp0: 0x%" PRIX32 "\n", tfp0);
+		kread_buf = _kread_buf != NULL ? _kread_buf : kread_buf_tfp0;
+		kwrite_buf = _kwrite_buf != NULL ? _kwrite_buf : kwrite_buf_tfp0;
+	}
+	if(setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1 && init_arm_pgshift() == KERN_SUCCESS) {
 		printf("arm_pgshift: %u\n", arm_pgshift);
-		if(init_tfp0() == KERN_SUCCESS) {
-			printf("tfp0: 0x%" PRIX32 "\n", tfp0);
-			if(pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS) {
-				printf("pv_head_table: " KADDR_FMT "\n", pv_head_table);
-				if(kread_buf(const_boot_args, &boot_args, sizeof(boot_args)) == KERN_SUCCESS) {
-					printf("virt_base: " KADDR_FMT ", phys_base: " KADDR_FMT ", mem_sz: 0x%" PRIX64 "\n", boot_args.virt_base, boot_args.phys_base, boot_args.mem_sz);
-					if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
-						printf("our_task: " KADDR_FMT "\n", our_task);
-						if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
-							printf("our_map: " KADDR_FMT "\n", our_map);
-							if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
-								printf("our_pmap: " KADDR_FMT "\n", our_pmap);
-								if(setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1) {
-									return KERN_SUCCESS;
-								}
-							}
+		if(pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS) {
+			printf("pv_head_table: " KADDR_FMT "\n", pv_head_table);
+			if(kread_buf(const_boot_args, &boot_args, sizeof(boot_args)) == KERN_SUCCESS) {
+				printf("virt_base: " KADDR_FMT ", phys_base: " KADDR_FMT ", mem_sz: 0x%" PRIX64 "\n", boot_args.virt_base, boot_args.phys_base, boot_args.mem_sz);
+				if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
+					printf("our_task: " KADDR_FMT "\n", our_task);
+					if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
+						printf("our_map: " KADDR_FMT "\n", our_map);
+						if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
+							printf("our_pmap: " KADDR_FMT "\n", our_pmap);
+							return KERN_SUCCESS;
 						}
 					}
 				}
 			}
-			mach_port_deallocate(mach_task_self(), tfp0);
 		}
 	}
+	golb_term();
 	return KERN_FAILURE;
 }
 

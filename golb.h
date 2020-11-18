@@ -22,9 +22,7 @@ typedef struct {
 		kaddr_t ptep, pte;
 	} *pages;
 } golb_ctx_t;
-
-kern_return_t
-golb_init(void);
+typedef kern_return_t (*kread_func_t)(kaddr_t, void *, mach_vm_size_t), (*kwrite_func_t)(kaddr_t, const void *, mach_msg_type_number_t);
 
 void
 golb_term(void);
@@ -37,6 +35,9 @@ golb_find_phys(kaddr_t);
 
 kern_return_t
 golb_flush_core_tlb_asid(void);
+
+kern_return_t
+golb_init(kaddr_t, kread_func_t, kwrite_func_t);
 
 kern_return_t
 golb_map(golb_ctx_t *, kaddr_t, mach_vm_size_t, vm_prot_t);

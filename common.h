@@ -22,7 +22,7 @@ typedef uint64_t kaddr_t;
 typedef uint32_t IOOptionBits;
 typedef mach_port_t io_object_t;
 typedef char io_name_t[128], io_string_t[512];
-typedef io_object_t io_service_t, io_iterator_t, io_registry_entry_t;
+typedef io_object_t io_iterator_t, io_registry_entry_t;
 
 kern_return_t
 IOObjectRelease(io_object_t);

@@ -33,9 +33,9 @@
 #define AES_CMD_CBC (16U)
 #define AES_BLOCK_SZ (16)
 #define CMD_OP_SHIFT (28U)
+#define AES_KEY_SZ_128 (0U)
 #define BLOCK_MODE_ECB (0U)
 #define BLOCK_MODE_CBC (1U)
-#define AES_KEY_SZ_128 (0U)
 #define KEY_SELECT_UID1 (1U)
 #define PMGR_PS_RUN_MAX (15U)
 #define AES_CMD_DIR_MASK (15U)
@@ -65,6 +65,7 @@
 #define TXT_IN_CTRL_VAL_SET (1U << 0U)
 #define TXT_OUT_STS_VAL_SET (1U << 0U)
 #define CMD_FLAG_STOP_CMDS_SHIFT (26U)
+#define AES_AP_SZ (vm_kernel_page_size)
 #define KEY_IN_CTRL_MOD_ECB (0U << 13U)
 #define KEY_IN_CTRL_MOD_CBC (1U << 13U)
 #define KEY_IN_CTRL_DIR_DEC (0U << 12U)
@@ -72,7 +73,6 @@
 #define KEY_IN_CTRL_SEL_UID1 (1U << 4U)
 #define KEY_IN_CTRL_SEL_GID0 (2U << 4U)
 #define KEY_IN_CTRL_SEL_GID1 (3U << 4U)
-#define AES_AP_SZ (vm_kernel_page_size)
 #define CMD_KEY_CMD_KEY_LEN_SHIFT (22U)
 #define CMD_KEY_CMD_ENCRYPT_SHIFT (20U)
 #define CMD_DATA_CMD_LEN_MASK (0xFFFFFFU)
@@ -498,7 +498,7 @@ main(int argc, char **argv) {
 		printf("Usage: %s [enc/dec UID0/GID0/GID1 in_file out_file buf_sz]\n", argv[0]);
 	} else if(init_arm_globals() == KERN_SUCCESS) {
 		printf("aes_ap_base_off: " KADDR_FMT ", pmgr_aes0_ps_off: " KADDR_FMT "\n", aes_ap_base_off, pmgr_aes0_ps_off);
-		if(golb_init() == KERN_SUCCESS) {
+		if(golb_init(0, NULL, NULL) == KERN_SUCCESS) {
 			if(aes_ap_init() == KERN_SUCCESS) {
 				if(argc == 1) {
 					aes_ap_test();
