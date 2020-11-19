@@ -30,6 +30,9 @@ IOObjectRelease(io_object_t);
 io_object_t
 IOIteratorNext(io_iterator_t);
 
+int
+proc_pidinfo(int, int, uint64_t, void *, int);
+
 CFDictionaryRef
 OSKextCopyLoadedKextInfo(CFArrayRef, CFArrayRef);
 
@@ -56,9 +59,6 @@ mach_vm_read_overwrite(vm_map_t, mach_vm_address_t, mach_vm_size_t, mach_vm_addr
 
 kern_return_t
 mach_vm_machine_attribute(vm_map_t, mach_vm_address_t, mach_vm_size_t, vm_machine_attribute_t, vm_machine_attribute_val_t *);
-
-kern_return_t
-mach_vm_region(vm_map_t, mach_vm_address_t *, mach_vm_size_t *, vm_region_flavor_t, vm_region_info_t, mach_msg_type_number_t *, mach_port_t *);
 
 kern_return_t
 mach_vm_remap(vm_map_t, mach_vm_address_t *, mach_vm_size_t, mach_vm_offset_t, int, vm_map_t, mach_vm_address_t, boolean_t, vm_prot_t *, vm_prot_t *, vm_inherit_t);

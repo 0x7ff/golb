@@ -53,6 +53,7 @@
 #define DER_OCTET_STR (0x4U)
 #define ARM_PGSHIFT_4K (12U)
 #define ARM_PGSHIFT_16K (14U)
+#define PROC_PIDREGIONINFO (7)
 #define ARM64_VMADDR_BITS (48U)
 #define ARM_PTE_TYPE_VALID (3U)
 #define RD(a) extract32(a, 0, 5)
@@ -114,6 +115,13 @@ typedef struct {
 } sec_64_t;
 
 typedef struct {
+	uint16_t rev, ver;
+	uint32_t pad;
+	kaddr_t virt_base, phys_base;
+	uint64_t mem_sz;
+} boot_args_t;
+
+typedef struct {
 	sec_64_t sec_text, sec_data, sec_cstring;
 	struct symtab_command cmd_symtab;
 	kaddr_t base, kslide, pc;
@@ -123,11 +131,12 @@ typedef struct {
 } pfinder_t;
 
 typedef struct {
-	uint16_t rev, ver;
-	uint32_t pad;
-	kaddr_t virt_base, phys_base;
-	uint64_t mem_sz;
-} boot_args_t;
+	struct {
+		uint32_t next, prev;
+	} vmp_q_pageq, vmp_listq, vmp_backgroundq;
+	uint64_t vmp_offset;
+	uint32_t vmp_object, q_flags, vmp_next_m, o_flags;
+} vm_page_t;
 
 typedef struct {
 	struct {
@@ -138,12 +147,11 @@ typedef struct {
 } vm_map_entry_t;
 
 typedef struct {
-	struct {
-		uint32_t next, prev;
-	} vmp_q_pageq, vmp_listq, vmp_backgroundq;
-	uint64_t vmp_offset;
-	uint32_t vmp_object, q_flags, vmp_next_m, o_flags;
-} vm_page_t;
+	uint32_t pri_protection, pri_max_protection, pri_inheritance, pri_flags;
+	uint64_t pri_offset;
+	uint32_t pri_behavior, pri_user_wired_count, pri_user_tag, pri_pages_resident, pri_pages_shared_now_private, pri_pages_swapped_out, pri_pages_dirtied, pri_ref_count, pri_shadow_depth, pri_share_mode, pri_private_pages_resident, pri_shared_pages_resident, pri_obj_id, pri_depth;
+	uint64_t pri_address, pri_size;
+} proc_regioninfo_data_t;
 
 typedef struct {
 	uint8_t ver_code[8];
@@ -678,27 +686,24 @@ pfinder_lowglo_ptr(pfinder_t pfinder) {
 static kaddr_t
 pfinder_init_kbase(pfinder_t *pfinder) {
 	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
-	vm_region_extended_info_data_t extended_info;
 	kaddr_t addr, kext_addr, kext_addr_slid;
 	CFDictionaryRef kexts_info, kext_info;
 	task_dyld_info_data_t dyld_info;
 	char kext_name[KMOD_MAX_NAME];
+	proc_regioninfo_data_t pri;
 	struct mach_header_64 mh64;
 	CFStringRef kext_name_cf;
 	CFNumberRef kext_addr_cf;
-	mach_port_t object_name;
 	CFArrayRef kext_names;
-	mach_vm_size_t sz;
 
 	if(pfinder->kslide == 0) {
-		if(task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
+		if(tfp0 != TASK_NULL && task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
 			pfinder->kslide = dyld_info.all_image_info_size;
 		}
 		if(pfinder->kslide == 0) {
-			cnt = VM_REGION_EXTENDED_INFO_COUNT;
-			for(addr = 0; mach_vm_region(tfp0, &addr, &sz, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&extended_info, &cnt, &object_name) == KERN_SUCCESS; addr += sz) {
-				mach_port_deallocate(mach_task_self(), object_name);
-				if(extended_info.protection == VM_PROT_READ && extended_info.user_tag == VM_KERN_MEMORY_OSKEXT) {
+			for(addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, addr, &pri, sizeof(pri)) == sizeof(pri); addr += pri.pri_size) {
+				addr = pri.pri_address;
+				if(pri.pri_protection == VM_PROT_READ && pri.pri_user_tag == VM_KERN_MEMORY_OSKEXT) {
 					if(kread_buf(addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
 						printf("kext_name: %s\n", kext_name);
 						if(kread_addr(addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
