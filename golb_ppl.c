@@ -79,6 +79,10 @@
 #define IS_LDR_X_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xF9400000U)
 #define ADR_IMM(a) ((sextract64(a, 5, 19) << 2U) | extract32(a, 29, 2))
 
+#ifndef MH_FILESET
+#	define MH_FILESET (0xC)
+#endif
+
 #ifndef SECT_CSTRING
 #	define SECT_CSTRING "__cstring"
 #endif
@@ -89,6 +93,10 @@
 
 #ifndef MIN
 #	define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
+#ifndef LC_FILESET_ENTRY
+#	define LC_FILESET_ENTRY (0x35 | LC_REQ_DYLD)
 #endif
 
 typedef uint32_t ipc_entry_num_t;
@@ -379,6 +387,13 @@ pfinder_init_macho(pfinder_t *pfinder, size_t off) {
 	struct symtab_command cmd_symtab;
 	struct segment_command_64 sg64;
 	struct mach_header_64 mh64;
+	struct {
+		uint32_t cmd, cmdsize;
+		kaddr_t vmaddr;
+		uint64_t fileoff;
+		union lc_str entry_id;
+		uint32_t reserved;
+	} fec;
 	struct load_command lc;
 	struct section_64 s64;
 
@@ -701,20 +716,20 @@ pfinder_init_offsets(void) {
 			proc_task_off = 0x18;
 			proc_p_pid_off = 0x10;
 			task_itk_space_off = 0x290;
-			if((res = CFStringCompare(cf_str, CFSTR("3789.1.24"), kCFCompareNumerically) == kCFCompareGreaterThan) || res == kCFCompareEqualTo) {
+			if((res = CFStringCompare(cf_str, CFSTR("3789.1.24"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
 				task_itk_space_off = 0x300;
-				if((res = CFStringCompare(cf_str, CFSTR("4397.0.0.2.4"), kCFCompareNumerically) == kCFCompareGreaterThan) || res == kCFCompareEqualTo) {
+				if((res = CFStringCompare(cf_str, CFSTR("4397.0.0.2.4"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
 					task_itk_space_off = 0x308;
-					if((res = CFStringCompare(cf_str, CFSTR("4903.200.199.12.3"), kCFCompareNumerically) == kCFCompareGreaterThan) || res == kCFCompareEqualTo) {
+					if((res = CFStringCompare(cf_str, CFSTR("4903.200.199.12.3"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
 						proc_task_off = 0x10;
 						proc_p_pid_off = 0x60;
 						task_itk_space_off = 0x300;
-						if((res = CFStringCompare(cf_str, CFSTR("6041.0.0.110.11"), kCFCompareNumerically) == kCFCompareGreaterThan) || res == kCFCompareEqualTo) {
+						if((res = CFStringCompare(cf_str, CFSTR("6041.0.0.110.11"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
 							task_map_off = 0x28;
 							task_itk_space_off = 0x320;
-							if((res = CFStringCompare(cf_str, CFSTR("6110.0.0.120.8"), kCFCompareNumerically) == kCFCompareGreaterThan) || res == kCFCompareEqualTo) {
+							if((res = CFStringCompare(cf_str, CFSTR("6110.0.0.120.8"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
 								proc_p_pid_off = 0x68;
-								if((res = CFStringCompare(cf_str, CFSTR("7090.0.0.112.4"), kCFCompareNumerically) == kCFCompareGreaterThan) || res == kCFCompareEqualTo) {
+								if((res = CFStringCompare(cf_str, CFSTR("7090.0.0.112.4"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
 									task_itk_space_off = 0x330;
 								}
 							}
