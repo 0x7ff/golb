@@ -151,6 +151,15 @@ sextract64(uint64_t val, unsigned start, unsigned len) {
 	return (uint64_t)((int64_t)(val << (64U - len - start)) >> (64U - len));
 }
 
+static void
+kxpacd(kaddr_t *addr) {
+#ifdef __arm64e__
+	__asm__ volatile("xpacd %0" : "+r"(*addr));
+#else
+	(void)addr;
+#endif
+}
+
 static size_t
 decompress_lzss(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_len) {
 	const uint8_t *src_end = src + src_len, *dst_start = dst, *dst_end = dst + dst_len;
@@ -434,7 +443,7 @@ pfinder_init_macho(pfinder_t *pfinder, size_t off) {
 					break;
 				}
 				memcpy(&fec, p, sizeof(fec));
-				if(fec.fileoff == 0 || fec.fileoff > pfinder->kernel_sz - sizeof(mh64) || fec.entry_id.offset > fec.cmdsize || p[fec.cmdsize - fec.entry_id.offset - 1] != '\0') {
+				if(fec.fileoff == 0 || fec.fileoff > pfinder->kernel_sz - sizeof(mh64) || fec.entry_id.offset > fec.cmdsize || p[fec.cmdsize - 1] != '\0') {
 					break;
 				}
 				if(strcmp(p + fec.entry_id.offset, "com.apple.kernel") == 0 && pfinder_init_macho(pfinder, fec.fileoff) == KERN_SUCCESS) {
@@ -853,10 +862,12 @@ lookup_ipc_port(mach_port_name_t port_name, kaddr_t *ipc_port) {
 	kaddr_t itk_space, is_table;
 
 	if(MACH_PORT_VALID(port_name) && kread_addr(our_task + task_itk_space_off, &itk_space) == KERN_SUCCESS) {
+		kxpacd(&itk_space);
 		printf("itk_space: " KADDR_FMT "\n", itk_space);
 		if(kread_buf(itk_space + IPC_SPACE_IS_TABLE_SZ_OFF, &is_table_sz, sizeof(is_table_sz)) == KERN_SUCCESS) {
 			printf("is_table_sz: 0x%" PRIX32 "\n", is_table_sz);
 			if((port_idx = MACH_PORT_INDEX(port_name)) < is_table_sz && kread_addr(itk_space + IPC_SPACE_IS_TABLE_OFF, &is_table) == KERN_SUCCESS) {
+				kxpacd(&is_table);
 				printf("is_table: " KADDR_FMT "\n", is_table);
 				return kread_addr(is_table + port_idx * IPC_ENTRY_SZ + IPC_ENTRY_IE_OBJECT_OFF, ipc_port);
 			}
@@ -870,6 +881,7 @@ lookup_io_object(io_object_t object, kaddr_t *ip_kobject) {
 	kaddr_t ipc_port;
 
 	if(lookup_ipc_port(object, &ipc_port) == KERN_SUCCESS) {
+		kxpacd(&ipc_port);
 		printf("ipc_port: " KADDR_FMT "\n", ipc_port);
 		return kread_addr(ipc_port + IPC_PORT_IP_KOBJECT_OFF, ip_kobject);
 	}
@@ -888,10 +900,13 @@ lookup_key_in_os_dict(kaddr_t os_dict, const char *key) {
 
 	if((cur_key = malloc(key_len)) != NULL) {
 		if(kread_addr(os_dict + OS_DICTIONARY_DICT_ENTRY_OFF, &os_dict_entry_ptr) == KERN_SUCCESS) {
+			kxpacd(&os_dict_entry_ptr);
 			printf("os_dict_entry_ptr: " KADDR_FMT "\n", os_dict_entry_ptr);
 			if(kread_buf(os_dict + OS_DICTIONARY_COUNT_OFF, &os_dict_cnt, sizeof(os_dict_cnt)) == KERN_SUCCESS) {
 				printf("os_dict_cnt: 0x%" PRIX32 "\n", os_dict_cnt);
 				while(os_dict_cnt-- != 0 && kread_buf(os_dict_entry_ptr + os_dict_cnt * sizeof(os_dict_entry), &os_dict_entry, sizeof(os_dict_entry)) == KERN_SUCCESS) {
+					kxpacd(&os_dict_entry.key);
+					kxpacd(&os_dict_entry.val);
 					printf("key: " KADDR_FMT ", val: " KADDR_FMT "\n", os_dict_entry.key, os_dict_entry.val);
 					if(kread_buf(os_dict_entry.key + OS_STRING_LEN_OFF, &cur_key_len, sizeof(cur_key_len)) != KERN_SUCCESS) {
 						break;
@@ -902,6 +917,7 @@ lookup_key_in_os_dict(kaddr_t os_dict, const char *key) {
 						if(kread_addr(os_dict_entry.key + OS_STRING_STRING_OFF, &string_ptr) != KERN_SUCCESS) {
 							break;
 						}
+						kxpacd(&string_ptr);
 						printf("string_ptr: " KADDR_FMT "\n", string_ptr);
 						if(kread_buf(string_ptr, cur_key, key_len) != KERN_SUCCESS) {
 							break;
@@ -925,6 +941,7 @@ get_object_from_os_array(kaddr_t os_array, uint32_t idx, kaddr_t *object) {
 	kaddr_t array_ptr;
 
 	if(kread_addr(os_array + OS_ARRAY_ARRAY_OFF, &array_ptr) == KERN_SUCCESS) {
+		kxpacd(&array_ptr);
 		printf("array_ptr: " KADDR_FMT "\n", array_ptr);
 		if(kread_buf(os_array + OS_ARRAY_CNT_OFF, &os_array_cnt, sizeof(os_array_cnt)) == KERN_SUCCESS) {
 			printf("os_array_cnt: 0x%" PRIX32 "\n", os_array_cnt);
@@ -941,18 +958,25 @@ get_kvirt_from_entry(io_registry_entry_t entry, uint32_t range_idx, kaddr_t *kvi
 	kaddr_t object, f_prop_table, ranges, range, mappings, members, mapping;
 
 	if(lookup_io_object(entry, &object) == KERN_SUCCESS) {
+		kxpacd(&object);
 		printf("object: " KADDR_FMT "\n", object);
 		if(kread_addr(object + IO_REGISTRY_ENTRY_F_PROP_TABLE_OFF, &f_prop_table) == KERN_SUCCESS) {
+			kxpacd(&f_prop_table);
 			printf("f_prop_table: " KADDR_FMT "\n", f_prop_table);
 			if((ranges = lookup_key_in_os_dict(f_prop_table, kIODeviceMemoryKey)) != 0) {
+				kxpacd(&ranges);
 				printf("ranges: " KADDR_FMT "\n", ranges);
 				if(get_object_from_os_array(ranges, range_idx, &range) == KERN_SUCCESS) {
+					kxpacd(&range);
 					printf("range: " KADDR_FMT "\n", range);
 					if(kread_addr(range + IO_DEVICE_MEMORY_MAPPINGS_OFF, &mappings) == KERN_SUCCESS) {
+						kxpacd(&mappings);
 						printf("mappings: " KADDR_FMT "\n", mappings);
 						if(kread_addr(mappings + OS_SET_MEMBERS_OFF, &members) == KERN_SUCCESS) {
+							kxpacd(&members);
 							printf("members: " KADDR_FMT "\n", members);
 							if(get_object_from_os_array(members, 0, &mapping) == KERN_SUCCESS) {
+								kxpacd(&mapping);
 								printf("mapping: " KADDR_FMT "\n", mapping);
 								return kread_addr(mapping + IO_MEMORY_MAP_F_ADDR_OFF, kvirt);
 							}
@@ -984,8 +1008,10 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 	}
 	(void)_kwrite_buf;
 	if(kread_buf != NULL && setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1 && pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && find_task(getpid(), &our_task) == KERN_SUCCESS) {
+		kxpacd(&our_task);
 		printf("our_task: " KADDR_FMT "\n", our_task);
 		if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
+			kxpacd(&our_map);
 			printf("our_map: " KADDR_FMT "\n", our_map);
 			return KERN_SUCCESS;
 		}

@@ -173,6 +173,15 @@ sextract64(uint64_t val, unsigned start, unsigned len) {
 	return (uint64_t)((int64_t)(val << (64U - len - start)) >> (64U - len));
 }
 
+static void
+kxpacd(kaddr_t *addr) {
+#ifdef __arm64e__
+	__asm__ volatile("xpacd %0" : "+r"(*addr));
+#else
+	(void)addr;
+#endif
+}
+
 static size_t
 decompress_lzss(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_len) {
 	const uint8_t *src_end = src + src_len, *dst_start = dst, *dst_end = dst + dst_len;
@@ -515,7 +524,7 @@ pfinder_init_macho(pfinder_t *pfinder, size_t off) {
 					break;
 				}
 				memcpy(&fec, p, sizeof(fec));
-				if(fec.fileoff == 0 || fec.fileoff > pfinder->kernel_sz - sizeof(mh64) || fec.entry_id.offset > fec.cmdsize || p[fec.cmdsize - fec.entry_id.offset - 1] != '\0') {
+				if(fec.fileoff == 0 || fec.fileoff > pfinder->kernel_sz - sizeof(mh64) || fec.entry_id.offset > fec.cmdsize || p[fec.cmdsize - 1] != '\0') {
 					break;
 				}
 				if(strcmp(p + fec.entry_id.offset, "com.apple.kernel") == 0 && pfinder_init_macho(pfinder, fec.fileoff) == KERN_SUCCESS) {
@@ -947,10 +956,13 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 			if(kread_buf(const_boot_args, &boot_args, sizeof(boot_args)) == KERN_SUCCESS) {
 				printf("virt_base: " KADDR_FMT ", phys_base: " KADDR_FMT ", mem_sz: 0x%" PRIX64 "\n", boot_args.virt_base, boot_args.phys_base, boot_args.mem_sz);
 				if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
+					kxpacd(&our_task);
 					printf("our_task: " KADDR_FMT "\n", our_task);
 					if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
+						kxpacd(&our_map);
 						printf("our_map: " KADDR_FMT "\n", our_map);
 						if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
+							kxpacd(&our_pmap);
 							printf("our_pmap: " KADDR_FMT "\n", our_pmap);
 							return KERN_SUCCESS;
 						}
