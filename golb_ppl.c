@@ -285,7 +285,6 @@ static kern_return_t
 init_tfp0(void) {
 	kern_return_t ret = task_for_pid(mach_task_self(), 0, &tfp0);
 	mach_port_t host;
-	pid_t pid;
 
 	if(ret != KERN_SUCCESS) {
 		host = mach_host_self();
@@ -294,15 +293,9 @@ init_tfp0(void) {
 			ret = host_get_special_port(host, HOST_LOCAL_NODE, 4, &tfp0);
 			mach_port_deallocate(mach_task_self(), host);
 		}
-		if(ret != KERN_SUCCESS) {
-			ret = task_get_special_port(mach_task_self(), TASK_ACCESS_PORT, &tfp0);
-		}
 	}
 	if(ret == KERN_SUCCESS && MACH_PORT_VALID(tfp0)) {
-		if(pid_for_task(tfp0, &pid) == KERN_SUCCESS && pid == 0) {
-			return ret;
-		}
-		mach_port_deallocate(mach_task_self(), tfp0);
+		return ret;
 	}
 	return KERN_FAILURE;
 }
@@ -383,7 +376,6 @@ pfinder_term(pfinder_t *pfinder) {
 static kern_return_t
 pfinder_init_macho(pfinder_t *pfinder, size_t off) {
 	const char *p = pfinder->kernel + off, *e;
-	struct fileset_entry_command fec;
 	struct symtab_command cmd_symtab;
 	struct segment_command_64 sg64;
 	struct mach_header_64 mh64;
