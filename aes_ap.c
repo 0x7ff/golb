@@ -176,7 +176,7 @@ init_arm_globals(void) {
 				pmgr_aes0_ps_off = 0x32080240;
 				pmgr_security_base_off = 0x352D0000;
 				return KERN_SUCCESS;
-#ifdef __arm64e__
+#if defined(__arm64e__) || TARGET_OS_OSX
 			case 0x07D34B9FU: /* CPUFAMILY_ARM_VORTEX_TEMPEST */
 				aes_ap_v2 = true;
 				aes_ap_base_off = 0x35008000;

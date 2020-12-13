@@ -30,9 +30,13 @@
 #define PROC_P_LIST_LE_PREV_OFF (0x8)
 #define VM_MAP_HDR_RBH_ROOT_OFF (0x38)
 #define PROC_P_LIST_LH_FIRST_OFF (0x0)
-#define PREBOOT_PATH "/private/preboot/"
 #define LOADED_KEXT_SUMMARY_HDR_NAME_OFF (0x10)
 #define LOADED_KEXT_SUMMARY_HDR_ADDR_OFF (0x60)
+#if TARGET_OS_OSX
+#	define PREBOOT_PATH "/System/Volumes/Preboot"
+#else
+#	define PREBOOT_PATH "/private/preboot/"
+#endif
 #define BOOT_PATH "/System/Library/Caches/com.apple.kernelcaches/kernelcache"
 
 #define AP_RWRW (1U)
@@ -93,10 +97,6 @@
 #define ADR_IMM(a) ((sextract64(a, 5, 19) << 2U) | extract32(a, 29, 2))
 #define ARM_PTE_MASK (((1ULL << ARM64_VMADDR_BITS) - 1U) & ~ARM_PGMASK)
 
-#ifndef MH_FILESET
-#	define MH_FILESET (0xC)
-#endif
-
 #ifndef SECT_CSTRING
 #	define SECT_CSTRING "__cstring"
 #endif
@@ -107,10 +107,6 @@
 
 #ifndef MIN
 #	define MIN(a, b) ((a) < (b) ? (a) : (b))
-#endif
-
-#ifndef LC_FILESET_ENTRY
-#	define LC_FILESET_ENTRY (0x35 | LC_REQ_DYLD)
 #endif
 
 typedef struct {
@@ -151,18 +147,12 @@ typedef struct {
 } vm_map_entry_t;
 
 typedef struct {
-	uint32_t pri_protection, pri_max_protection, pri_inheritance, pri_flags;
-	uint64_t pri_offset;
-	uint32_t pri_behavior, pri_user_wired_count, pri_user_tag, pri_pages_resident, pri_pages_shared_now_private, pri_pages_swapped_out, pri_pages_dirtied, pri_ref_count, pri_shadow_depth, pri_share_mode, pri_private_pages_resident, pri_shared_pages_resident, pri_obj_id, pri_depth;
-	uint64_t pri_address, pri_size;
-} proc_regioninfo_data_t;
-
-typedef struct {
 	uint8_t ver_code[8];
 	kaddr_t zero, stext, ver, os_ver, kmod_ptr, trans_off, reboot_flag, manual_pkt_addr, alt_debugger, pmap_memq, pmap_mem_page_off, pmap_mem_chain_off, static_addr, static_sz, layout_major_ver, layout_magic, pmap_mem_start_addr, pmap_mem_end_addr, pmap_mem_page_sz, pmap_mem_from_array_mask, pmap_mem_first_ppnum, pmap_mem_packed_shift, pmap_mem_packed_base_addr, layout_minor_ver, page_shift;
 } lowglo_t;
 
 static lowglo_t lowglo;
+static int kmem_fd = -1;
 static unsigned arm_pgshift;
 static boot_args_t boot_args;
 static kread_func_t kread_buf;
@@ -183,7 +173,7 @@ sextract64(uint64_t val, unsigned start, unsigned len) {
 
 static void
 kxpacd(kaddr_t *addr) {
-#ifdef __arm64e__
+#if defined(__arm64e__) || TARGET_OS_OSX
 	__asm__ volatile("xpacd %0" : "+r"(*addr));
 #else
 	(void)addr;
@@ -386,6 +376,26 @@ kwrite_buf_tfp0(kaddr_t addr, const void *buf, mach_msg_type_number_t sz) {
 }
 
 static kern_return_t
+kread_buf_kmem(kaddr_t addr, void *buf, mach_vm_size_t sz) {
+	ssize_t n = pread(kmem_fd, buf, sz, (off_t)addr);
+
+	if(n > 0 && (mach_vm_size_t)n == sz) {
+		return KERN_SUCCESS;
+	}
+	return KERN_FAILURE;
+}
+
+static kern_return_t
+kwrite_buf_kmem(kaddr_t addr, const void *buf, mach_msg_type_number_t sz) {
+	ssize_t n = pwrite(kmem_fd, buf, sz, (off_t)addr);
+
+	if(n > 0 && (mach_msg_type_number_t)n == sz) {
+		return KERN_SUCCESS;
+	}
+	return KERN_FAILURE;
+}
+
+static kern_return_t
 kwrite_addr(kaddr_t addr, kaddr_t val) {
 	return kwrite_buf(addr, &val, sizeof(val));
 }
@@ -450,21 +460,23 @@ pfinder_init_macho(pfinder_t *pfinder, size_t off) {
 		kaddr_t x[29], fp, lr, sp, pc;
 		uint32_t cpsr, pad;
 	} state;
+#if TARGET_OS_OSX
+	struct fileset_entry_command fec;
+#endif
 	struct symtab_command cmd_symtab;
 	struct segment_command_64 sg64;
 	struct mach_header_64 mh64;
-	struct {
-		uint32_t cmd, cmdsize;
-		kaddr_t vmaddr;
-		uint64_t fileoff;
-		union lc_str entry_id;
-		uint32_t reserved;
-	} fec;
 	struct load_command lc;
 	struct section_64 s64;
 
 	memcpy(&mh64, p, sizeof(mh64));
-	if(mh64.magic == MH_MAGIC_64 && mh64.cputype == CPU_TYPE_ARM64 && (mh64.filetype == MH_EXECUTE || (off == 0 && mh64.filetype == MH_FILESET)) && mh64.sizeofcmds < pfinder->kernel_sz - sizeof(mh64)) {
+	if(mh64.magic == MH_MAGIC_64 && mh64.cputype == CPU_TYPE_ARM64 &&
+#if TARGET_OS_OSX
+	   (mh64.filetype == MH_EXECUTE || (off == 0 && mh64.filetype == MH_FILESET))
+#else
+	   mh64.filetype == MH_EXECUTE
+#endif
+	   && mh64.sizeofcmds < pfinder->kernel_sz - sizeof(mh64)) {
 		for(p += sizeof(mh64), e = p + mh64.sizeofcmds; mh64.ncmds-- != 0 && (size_t)(e - p) >= sizeof(lc); p += lc.cmdsize) {
 			memcpy(&lc, p, sizeof(lc));
 			if(lc.cmdsize < sizeof(lc) || (size_t)(e - p) < lc.cmdsize) {
@@ -526,7 +538,9 @@ pfinder_init_macho(pfinder_t *pfinder, size_t off) {
 				memcpy(&state, p + sizeof(struct thread_command), sizeof(state));
 				pfinder->pc = state.pc;
 				printf("pc: " KADDR_FMT "\n", state.pc);
-			} else if(mh64.filetype == MH_FILESET && lc.cmd == LC_FILESET_ENTRY) {
+			}
+#if TARGET_OS_OSX
+			else if(mh64.filetype == MH_FILESET && lc.cmd == LC_FILESET_ENTRY) {
 				if(lc.cmdsize < sizeof(fec)) {
 					break;
 				}
@@ -538,6 +552,7 @@ pfinder_init_macho(pfinder_t *pfinder, size_t off) {
 					return KERN_SUCCESS;
 				}
 			}
+#endif
 			if(pfinder->base != 0 && pfinder->sec_text.s64.size != 0 && pfinder->sec_data.s64.size != 0 && pfinder->sec_cstring.s64.size != 0 && pfinder->cmd_symtab.cmdsize != 0 && pfinder->pc != 0) {
 				return KERN_SUCCESS;
 			}
@@ -718,12 +733,17 @@ pfinder_lowglo_ptr(pfinder_t pfinder) {
 
 static kaddr_t
 pfinder_init_kbase(pfinder_t *pfinder) {
+	struct {
+		uint32_t pri_protection, pri_max_protection, pri_inheritance, pri_flags;
+		uint64_t pri_offset;
+		uint32_t pri_behavior, pri_user_wired_count, pri_user_tag, pri_pages_resident, pri_pages_shared_now_private, pri_pages_swapped_out, pri_pages_dirtied, pri_ref_count, pri_shadow_depth, pri_share_mode, pri_private_pages_resident, pri_shared_pages_resident, pri_obj_id, pri_depth;
+		uint64_t pri_address, pri_size;
+	} pri;
 	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
 	kaddr_t addr, kext_addr, kext_addr_slid;
 	CFDictionaryRef kexts_info, kext_info;
 	task_dyld_info_data_t dyld_info;
 	char kext_name[KMOD_MAX_NAME];
-	proc_regioninfo_data_t pri;
 	struct mach_header_64 mh64;
 	CFStringRef kext_name_cf;
 	CFNumberRef kext_addr_cf;
@@ -760,7 +780,13 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 			}
 		}
 	}
-	if(pfinder->base + kslide > pfinder->base && kread_buf(pfinder->base + kslide, &mh64, sizeof(mh64)) == KERN_SUCCESS && mh64.magic == MH_MAGIC_64 && mh64.cputype == CPU_TYPE_ARM64 && mh64.filetype == MH_EXECUTE) {
+	if(pfinder->base + kslide > pfinder->base && kread_buf(pfinder->base + kslide, &mh64, sizeof(mh64)) == KERN_SUCCESS && mh64.magic == MH_MAGIC_64 && mh64.cputype == CPU_TYPE_ARM64 && mh64.filetype ==
+#if TARGET_OS_OSX
+	   MH_FILESET
+#else
+	   MH_EXECUTE
+#endif
+	   ) {
 		pfinder->pc += kslide;
 		pfinder->sec_text.s64.addr += kslide;
 		pfinder->sec_data.s64.addr += kslide;
@@ -773,17 +799,38 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 
 static char *
 get_boot_path(void) {
-	size_t hash_len, path_len = sizeof(BOOT_PATH);
-	io_registry_entry_t chosen;
-	struct stat stat_buf;
+	size_t path_len = sizeof(BOOT_PATH);
+#if TARGET_OS_OSX
+	CFDataRef boot_objects_path_cf;
+	size_t boot_objects_path_len;
+#else
 	const uint8_t *hash;
 	CFDataRef hash_cf;
+	size_t hash_len;
+#endif
+	io_registry_entry_t chosen;
+	struct stat stat_buf;
 	char *path = NULL;
 
-	if(stat(PREBOOT_PATH, &stat_buf) != -1 && S_ISDIR(stat_buf.st_mode) && (chosen = IORegistryEntryFromPath(kIOMasterPortDefault, kIODeviceTreePlane ":/chosen")) != IO_OBJECT_NULL) {
+	if(stat(BOOT_PATH, &stat_buf) != -1 && S_ISREG(stat_buf.st_mode)) {
+		path = malloc(path_len);
+	} else if(stat(PREBOOT_PATH, &stat_buf) != -1 && S_ISDIR(stat_buf.st_mode) && (chosen = IORegistryEntryFromPath(kIOMasterPortDefault, kIODeviceTreePlane ":/chosen")) != IO_OBJECT_NULL) {
+		path_len += strlen(PREBOOT_PATH);
+#if TARGET_OS_OSX
+		if((boot_objects_path_cf = IORegistryEntryCreateCFProperty(chosen, CFSTR("boot-objects-path"), kCFAllocatorDefault, kNilOptions)) != NULL) {
+			if(CFGetTypeID(boot_objects_path_cf) == CFDataGetTypeID() && (boot_objects_path_len = (size_t)CFDataGetLength(boot_objects_path_cf) - 1) != 0) {
+				path_len += boot_objects_path_len;
+				if((path = malloc(path_len)) != NULL) {
+					memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
+					memcpy(path + strlen(PREBOOT_PATH), CFDataGetBytePtr(boot_objects_path_cf), boot_objects_path_len);
+				}
+			}
+			CFRelease(boot_objects_path_cf);
+		}
+#else
 		if((hash_cf = IORegistryEntryCreateCFProperty(chosen, CFSTR("boot-manifest-hash"), kCFAllocatorDefault, kNilOptions)) != NULL) {
 			if(CFGetTypeID(hash_cf) == CFDataGetTypeID() && (hash_len = (size_t)CFDataGetLength(hash_cf) << 1U) != 0) {
-				path_len += strlen(PREBOOT_PATH) + hash_len;
+				path_len += hash_len;
 				if((path = malloc(path_len)) != NULL) {
 					memcpy(path, PREBOOT_PATH, strlen(PREBOOT_PATH));
 					for(hash = CFDataGetBytePtr(hash_cf); hash_len-- != 0; ) {
@@ -793,11 +840,8 @@ get_boot_path(void) {
 			}
 			CFRelease(hash_cf);
 		}
+#endif
 		IOObjectRelease(chosen);
-	}
-	if(path == NULL) {
-		path_len = sizeof(BOOT_PATH);
-		path = malloc(path_len);
 	}
 	if(path != NULL) {
 		memcpy(path + (path_len - sizeof(BOOT_PATH)), BOOT_PATH, sizeof(BOOT_PATH));
@@ -809,7 +853,6 @@ static kern_return_t
 pfinder_init_offsets(void) {
 	kern_return_t ret = KERN_FAILURE;
 	char *p, *e, *boot_path;
-	CFComparisonResult res;
 	struct utsname uts;
 	CFStringRef cf_str;
 	pfinder_t pfinder;
@@ -823,20 +866,20 @@ pfinder_init_offsets(void) {
 			proc_p_pid_off = 0x10;
 			pmap_sw_asid_off = 0x28;
 			vm_map_flags_off = 0x110;
-			if((res = CFStringCompare(cf_str, CFSTR("4903.200.199.12.3"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
+			if(CFStringCompare(cf_str, CFSTR("4903.200.199.12.3"), kCFCompareNumerically) != kCFCompareLessThan) {
 				proc_task_off = 0x10;
 				proc_p_pid_off = 0x60;
 				pmap_sw_asid_off = 0xDC;
 				vm_map_flags_off = 0x10C;
 				pvh_high_flags = PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN;
-				if((res = CFStringCompare(cf_str, CFSTR("6041.0.0.110.11"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
+				if(CFStringCompare(cf_str, CFSTR("6041.0.0.110.11"), kCFCompareNumerically) != kCFCompareLessThan) {
 					task_map_off = 0x28;
 					pmap_sw_asid_off = 0xEE;
-					if((res = CFStringCompare(cf_str, CFSTR("6110.0.0.120.8"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
+					if(CFStringCompare(cf_str, CFSTR("6110.0.0.120.8"), kCFCompareNumerically) != kCFCompareLessThan) {
 						proc_p_pid_off = 0x68;
-						if((res = CFStringCompare(cf_str, CFSTR("6153.40.121.0.1"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
+						if(CFStringCompare(cf_str, CFSTR("6153.40.121.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
 							pmap_sw_asid_off = 0xE6;
-							if((res = CFStringCompare(cf_str, CFSTR("7090.0.0.112.4"), kCFCompareNumerically)) == kCFCompareGreaterThan || res == kCFCompareEqualTo) {
+							if(CFStringCompare(cf_str, CFSTR("7090.0.0.111.5"), kCFCompareNumerically) != kCFCompareLessThan) {
 								pmap_sw_asid_off = 0xDE;
 								pvh_high_flags |= PVH_FLAG_PPL_HASHED;
 							}
@@ -939,6 +982,8 @@ void
 golb_term(void) {
 	if(tfp0 != TASK_NULL) {
 		mach_port_deallocate(mach_task_self(), tfp0);
+	} else if(kmem_fd != -1) {
+		close(kmem_fd);
 	}
 	setpriority(PRIO_PROCESS, 0, 0);
 }
@@ -955,30 +1000,42 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 		printf("tfp0: 0x%" PRIX32 "\n", tfp0);
 		kread_buf = _kread_buf != NULL ? _kread_buf : kread_buf_tfp0;
 		kwrite_buf = _kwrite_buf != NULL ? _kwrite_buf : kwrite_buf_tfp0;
+	} else if((kmem_fd = open("/dev/kmem", O_RDWR | O_CLOEXEC)) != -1) {
+		kread_buf = _kread_buf != NULL ? _kread_buf : kread_buf_kmem;
+		kwrite_buf = _kwrite_buf != NULL ? _kwrite_buf : kwrite_buf_kmem;
+	} else {
+		return KERN_FAILURE;
 	}
-	if(kread_buf != NULL && kwrite_buf != NULL && setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1 && init_arm_pgshift() == KERN_SUCCESS) {
-		printf("arm_pgshift: %u\n", arm_pgshift);
-		if(pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS) {
-			printf("pv_head_table: " KADDR_FMT "\n", pv_head_table);
-			if(kread_buf(const_boot_args, &boot_args, sizeof(boot_args)) == KERN_SUCCESS) {
-				printf("virt_base: " KADDR_FMT ", phys_base: " KADDR_FMT ", mem_sz: 0x%" PRIX64 "\n", boot_args.virt_base, boot_args.phys_base, boot_args.mem_sz);
-				if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
-					kxpacd(&our_task);
-					printf("our_task: " KADDR_FMT "\n", our_task);
-					if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
-						kxpacd(&our_map);
-						printf("our_map: " KADDR_FMT "\n", our_map);
-						if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
-							kxpacd(&our_pmap);
-							printf("our_pmap: " KADDR_FMT "\n", our_pmap);
-							return KERN_SUCCESS;
+	if(setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1) {
+		if(init_arm_pgshift() == KERN_SUCCESS) {
+			printf("arm_pgshift: %u\n", arm_pgshift);
+			if(pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS) {
+				printf("pv_head_table: " KADDR_FMT "\n", pv_head_table);
+				if(kread_buf(const_boot_args, &boot_args, sizeof(boot_args)) == KERN_SUCCESS) {
+					printf("virt_base: " KADDR_FMT ", phys_base: " KADDR_FMT ", mem_sz: 0x%" PRIX64 "\n", boot_args.virt_base, boot_args.phys_base, boot_args.mem_sz);
+					if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
+						kxpacd(&our_task);
+						printf("our_task: " KADDR_FMT "\n", our_task);
+						if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
+							kxpacd(&our_map);
+							printf("our_map: " KADDR_FMT "\n", our_map);
+							if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
+								kxpacd(&our_pmap);
+								printf("our_pmap: " KADDR_FMT "\n", our_pmap);
+								return KERN_SUCCESS;
+							}
 						}
 					}
 				}
 			}
 		}
+		setpriority(PRIO_PROCESS, 0, 0);
 	}
-	golb_term();
+	if(tfp0 != TASK_NULL) {
+		mach_port_deallocate(mach_task_self(), tfp0);
+	} else if(kmem_fd != -1) {
+		close(kmem_fd);
+	}
 	return KERN_FAILURE;
 }
 

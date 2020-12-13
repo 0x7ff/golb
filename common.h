@@ -27,9 +27,6 @@ typedef io_object_t io_iterator_t, io_registry_entry_t;
 kern_return_t
 IOObjectRelease(io_object_t);
 
-io_object_t
-IOIteratorNext(io_iterator_t);
-
 int
 proc_pidinfo(int, int, uint64_t, void *, int);
 
@@ -49,7 +46,7 @@ kern_return_t
 mach_vm_write(vm_map_t, mach_vm_address_t, vm_offset_t, mach_msg_type_number_t);
 
 kern_return_t
-IORegistryCreateIterator(mach_port_t, const io_name_t, IOOptionBits, io_iterator_t *);
+mach_vm_protect(vm_map_t, mach_vm_address_t, mach_vm_size_t, boolean_t, vm_prot_t);
 
 CFTypeRef
 IORegistryEntryCreateCFProperty(io_registry_entry_t, CFStringRef, CFAllocatorRef, IOOptionBits);
