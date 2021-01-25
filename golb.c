@@ -64,6 +64,7 @@
 #define LOWGLO_VER_CODE "Kraken  "
 #define PVH_FLAG_EXEC (1ULL << 60U)
 #define CACHE_ATTRINDX_DISABLE (3U)
+#define PVH_FLAG_HASHED (1ULL << 58U)
 #define KCOMP_HDR_MAGIC (0x636F6D70U)
 #define ADRP_ADDR(a) ((a) & ~0xFFFULL)
 #define PVH_LIST_MASK (~PVH_TYPE_MASK)
@@ -77,7 +78,6 @@
 #define ARM_PTE_PNX (0x20000000000000ULL)
 #define ADD_X_IMM(a) extract32(a, 10, 12)
 #define kIODeviceTreePlane "IODeviceTree"
-#define PVH_FLAG_PPL_HASHED (1ULL << 58U)
 #define KCOMP_HDR_TYPE_LZSS (0x6C7A7373U)
 #define LOWGLO_LAYOUT_MAGIC (0xC0DEC0DEU)
 #define FAULT_MAGIC (0xAAAAAAAAAAAAAAAAULL)
@@ -734,10 +734,11 @@ pfinder_lowglo_ptr(pfinder_t pfinder) {
 static kaddr_t
 pfinder_init_kbase(pfinder_t *pfinder) {
 	struct {
-		uint32_t pri_protection, pri_max_protection, pri_inheritance, pri_flags;
+		uint32_t pri_prot, pri_max_prot, pri_inheritance, pri_flags;
 		uint64_t pri_offset;
-		uint32_t pri_behavior, pri_user_wired_count, pri_user_tag, pri_pages_resident, pri_pages_shared_now_private, pri_pages_swapped_out, pri_pages_dirtied, pri_ref_count, pri_shadow_depth, pri_share_mode, pri_private_pages_resident, pri_shared_pages_resident, pri_obj_id, pri_depth;
-		uint64_t pri_address, pri_size;
+		uint32_t pri_behavior, pri_user_wired_cnt, pri_user_tag, pri_pages_resident, pri_pages_shared_now_private, pri_pages_swapped_out, pri_pages_dirtied, pri_ref_cnt, pri_shadow_depth, pri_share_mode, pri_private_pages_resident, pri_shared_pages_resident, pri_obj_id, pri_depth;
+		kaddr_t pri_addr;
+		uint64_t pri_sz;
 	} pri;
 	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
 	kaddr_t addr, kext_addr, kext_addr_slid;
@@ -754,9 +755,9 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 			kslide = dyld_info.all_image_info_size;
 		}
 		if(kslide == 0) {
-			for(addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, addr, &pri, sizeof(pri)) == sizeof(pri); addr += pri.pri_size) {
-				addr = pri.pri_address;
-				if(pri.pri_protection == VM_PROT_READ && pri.pri_user_tag == VM_KERN_MEMORY_OSKEXT) {
+			for(addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, addr, &pri, sizeof(pri)) == sizeof(pri); addr += pri.pri_sz) {
+				addr = pri.pri_addr;
+				if(pri.pri_prot == VM_PROT_READ && pri.pri_user_tag == VM_KERN_MEMORY_OSKEXT) {
 					if(kread_buf(addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
 						printf("kext_name: %s\n", kext_name);
 						if(kread_addr(addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
@@ -879,9 +880,9 @@ pfinder_init_offsets(void) {
 						proc_p_pid_off = 0x68;
 						if(CFStringCompare(cf_str, CFSTR("6153.40.121.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
 							pmap_sw_asid_off = 0xE6;
-							if(CFStringCompare(cf_str, CFSTR("7090.0.0.111.5"), kCFCompareNumerically) != kCFCompareLessThan) {
+							if(CFStringCompare(cf_str, CFSTR("7090.0.0.110.4"), kCFCompareNumerically) != kCFCompareLessThan) {
 								pmap_sw_asid_off = 0xDE;
-								pvh_high_flags |= PVH_FLAG_PPL_HASHED;
+								pvh_high_flags |= PVH_FLAG_HASHED;
 							}
 						}
 					}

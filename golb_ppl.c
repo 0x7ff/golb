@@ -625,10 +625,11 @@ pfinder_lowglo_ptr(pfinder_t pfinder) {
 static kaddr_t
 pfinder_init_kbase(pfinder_t *pfinder) {
 	struct {
-		uint32_t pri_protection, pri_max_protection, pri_inheritance, pri_flags;
+		uint32_t pri_prot, pri_max_prot, pri_inheritance, pri_flags;
 		uint64_t pri_offset;
-		uint32_t pri_behavior, pri_user_wired_count, pri_user_tag, pri_pages_resident, pri_pages_shared_now_private, pri_pages_swapped_out, pri_pages_dirtied, pri_ref_count, pri_shadow_depth, pri_share_mode, pri_private_pages_resident, pri_shared_pages_resident, pri_obj_id, pri_depth;
-		uint64_t pri_address, pri_size;
+		uint32_t pri_behavior, pri_user_wired_cnt, pri_user_tag, pri_pages_resident, pri_pages_shared_now_private, pri_pages_swapped_out, pri_pages_dirtied, pri_ref_cnt, pri_shadow_depth, pri_share_mode, pri_private_pages_resident, pri_shared_pages_resident, pri_obj_id, pri_depth;
+		kaddr_t pri_addr;
+		uint64_t pri_sz;
 	} pri;
 	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
 	kaddr_t addr, kext_addr, kext_addr_slid;
@@ -645,9 +646,9 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 			kslide = dyld_info.all_image_info_size;
 		}
 		if(kslide == 0) {
-			for(addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, addr, &pri, sizeof(pri)) == sizeof(pri); addr += pri.pri_size) {
-				addr = pri.pri_address;
-				if(pri.pri_protection == VM_PROT_READ && pri.pri_user_tag == VM_KERN_MEMORY_OSKEXT) {
+			for(addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, addr, &pri, sizeof(pri)) == sizeof(pri); addr += pri.pri_sz) {
+				addr = pri.pri_addr;
+				if(pri.pri_prot == VM_PROT_READ && pri.pri_user_tag == VM_KERN_MEMORY_OSKEXT) {
 					if(kread_buf(addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
 						printf("kext_name: %s\n", kext_name);
 						if(kread_addr(addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
@@ -895,7 +896,7 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 				printf("our_map: " KADDR_FMT "\n", our_map);
 				while(mach_vm_allocate(mach_task_self(), &target_virt, vm_kernel_page_size, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
 					*(volatile kaddr_t *)target_virt = FAULT_MAGIC;
-					if(vm_map_lookup_entry(our_map, target_virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && kread_buf(vm_entry.vme_object, &packed_ptr, sizeof(packed_ptr)) == KERN_SUCCESS && (target_vm_page = vm_page_unpack_ptr(packed_ptr)) != 0 && (target_vm_page < lowglo.pmap_mem_start_addr || target_vm_page >= lowglo.pmap_mem_end_addr) && kread_buf(target_vm_page + lowglo.pmap_mem_page_sz, &target_phys_page, sizeof(target_phys_page)) == KERN_SUCCESS && kwrite_buf(vm_entry.vme_object + vm_object_wimg_bits_off, &wimg_bits, sizeof(wimg_bits)) == KERN_SUCCESS) {
+					if(vm_map_lookup_entry(our_map, target_virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && kread_buf(vm_entry.vme_object, &packed_ptr, sizeof(packed_ptr)) == KERN_SUCCESS && (target_vm_page = vm_page_unpack_ptr(packed_ptr)) != 0 && target_vm_page != vm_entry.vme_object && (target_vm_page < lowglo.pmap_mem_start_addr || target_vm_page >= lowglo.pmap_mem_end_addr) && kread_buf(target_vm_page + lowglo.pmap_mem_page_sz, &target_phys_page, sizeof(target_phys_page)) == KERN_SUCCESS && kwrite_buf(vm_entry.vme_object + vm_object_wimg_bits_off, &wimg_bits, sizeof(wimg_bits)) == KERN_SUCCESS) {
 						printf("target_virt: " KADDR_FMT ", target_vm_page: " KADDR_FMT ", target_phys: " KADDR_FMT "\n", target_virt, target_vm_page, (kaddr_t)target_phys_page << vm_kernel_page_shift);
 						return KERN_SUCCESS;
 					}
