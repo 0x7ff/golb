@@ -308,8 +308,6 @@ aes_ap_v1_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opt
 		} while((len -= AES_BLOCK_SZ) != 0);
 		ret = KERN_SUCCESS;
 	}
-	rPMGR_AES0_PS &= ~PMGR_PS_RUN_MAX;
-	while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
 	return ret;
 }
 

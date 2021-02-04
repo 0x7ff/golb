@@ -19,10 +19,10 @@
 #	define KADDR_FMT "0x%" PRIX64
 #	define IO_OBJECT_NULL ((io_object_t)0)
 typedef uint64_t kaddr_t;
+typedef char io_string_t[512];
 typedef uint32_t IOOptionBits;
 typedef mach_port_t io_object_t;
-typedef char io_name_t[128], io_string_t[512];
-typedef io_object_t io_iterator_t, io_registry_entry_t;
+typedef io_object_t io_registry_entry_t;
 
 kern_return_t
 IOObjectRelease(io_object_t);
@@ -45,9 +45,6 @@ mach_vm_allocate(vm_map_t, mach_vm_address_t *, mach_vm_size_t, int);
 kern_return_t
 mach_vm_write(vm_map_t, mach_vm_address_t, vm_offset_t, mach_msg_type_number_t);
 
-kern_return_t
-mach_vm_protect(vm_map_t, mach_vm_address_t, mach_vm_size_t, boolean_t, vm_prot_t);
-
 CFTypeRef
 IORegistryEntryCreateCFProperty(io_registry_entry_t, CFStringRef, CFAllocatorRef, IOOptionBits);
 
@@ -56,9 +53,6 @@ mach_vm_read_overwrite(vm_map_t, mach_vm_address_t, mach_vm_size_t, mach_vm_addr
 
 kern_return_t
 mach_vm_machine_attribute(vm_map_t, mach_vm_address_t, mach_vm_size_t, vm_machine_attribute_t, vm_machine_attribute_val_t *);
-
-kern_return_t
-mach_vm_remap(vm_map_t, mach_vm_address_t *, mach_vm_size_t, mach_vm_offset_t, int, vm_map_t, mach_vm_address_t, boolean_t, vm_prot_t *, vm_prot_t *, vm_inherit_t);
 
 extern const mach_port_t kIOMasterPortDefault;
 #endif

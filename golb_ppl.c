@@ -114,6 +114,12 @@ typedef struct {
 	kaddr_t zero, stext, ver, os_ver, kmod_ptr, trans_off, reboot_flag, manual_pkt_addr, alt_debugger, pmap_memq, pmap_mem_page_off, pmap_mem_chain_off, static_addr, static_sz, layout_major_ver, layout_magic, pmap_mem_start_addr, pmap_mem_end_addr, pmap_mem_page_sz, pmap_mem_from_array_mask, pmap_mem_first_ppnum, pmap_mem_packed_shift, pmap_mem_packed_base_addr, layout_minor_ver, page_shift;
 } lowglo_t;
 
+kern_return_t
+mach_vm_protect(vm_map_t, mach_vm_address_t, mach_vm_size_t, boolean_t, vm_prot_t);
+
+kern_return_t
+mach_vm_remap(vm_map_t, mach_vm_address_t *, mach_vm_size_t, mach_vm_offset_t, int, vm_map_t, mach_vm_address_t, boolean_t, vm_prot_t *, vm_prot_t *, vm_inherit_t);
+
 static lowglo_t lowglo;
 static sigjmp_buf jbuf;
 static int kmem_fd = -1;
@@ -260,6 +266,7 @@ static kern_return_t
 init_tfp0(void) {
 	kern_return_t ret = task_for_pid(mach_task_self(), 0, &tfp0);
 	mach_port_t host;
+	pid_t pid;
 
 	if(ret != KERN_SUCCESS) {
 		host = mach_host_self();
@@ -270,7 +277,10 @@ init_tfp0(void) {
 		}
 	}
 	if(ret == KERN_SUCCESS && MACH_PORT_VALID(tfp0)) {
-		return ret;
+		if(pid_for_task(tfp0, &pid) == KERN_SUCCESS) {
+			return ret;
+		}
+		mach_port_deallocate(mach_task_self(), tfp0);
 	}
 	return KERN_FAILURE;
 }
@@ -632,8 +642,8 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 		uint64_t pri_sz;
 	} pri;
 	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
-	kaddr_t addr, kext_addr, kext_addr_slid;
 	CFDictionaryRef kexts_info, kext_info;
+	kaddr_t kext_addr, kext_addr_slid;
 	task_dyld_info_data_t dyld_info;
 	char kext_name[KMOD_MAX_NAME];
 	struct mach_header_64 mh64;
@@ -641,34 +651,28 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 	CFNumberRef kext_addr_cf;
 	CFArrayRef kext_names;
 
-	if(kslide == 0) {
-		if(tfp0 != TASK_NULL && task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) == KERN_SUCCESS) {
-			kslide = dyld_info.all_image_info_size;
-		}
-		if(kslide == 0) {
-			for(addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, addr, &pri, sizeof(pri)) == sizeof(pri); addr += pri.pri_sz) {
-				addr = pri.pri_addr;
-				if(pri.pri_prot == VM_PROT_READ && pri.pri_user_tag == VM_KERN_MEMORY_OSKEXT) {
-					if(kread_buf(addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
-						printf("kext_name: %s\n", kext_name);
-						if(kread_addr(addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
-							printf("kext_addr_slid: " KADDR_FMT "\n", kext_addr_slid);
-							if((kext_name_cf = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, kext_name, kCFStringEncodingUTF8, kCFAllocatorNull)) != NULL) {
-								if((kext_names = CFArrayCreate(kCFAllocatorDefault, (const void **)&kext_name_cf, 1, &kCFTypeArrayCallBacks)) != NULL) {
-									if((kexts_info = OSKextCopyLoadedKextInfo(kext_names, NULL)) != NULL) {
-										if(CFGetTypeID(kexts_info) == CFDictionaryGetTypeID() && CFDictionaryGetCount(kexts_info) == 1 && (kext_info = CFDictionaryGetValue(kexts_info, kext_name_cf)) != NULL && CFGetTypeID(kext_info) == CFDictionaryGetTypeID() && (kext_addr_cf = CFDictionaryGetValue(kext_info, CFSTR(kOSBundleLoadAddressKey))) != NULL && CFGetTypeID(kext_addr_cf) == CFNumberGetTypeID() && CFNumberGetValue(kext_addr_cf, kCFNumberSInt64Type, &kext_addr) && kext_addr_slid > kext_addr) {
-											kslide = kext_addr_slid - kext_addr;
-										}
-										CFRelease(kexts_info);
+	if(kslide == 0 && (tfp0 == TASK_NULL || task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) != KERN_SUCCESS || (kslide = dyld_info.all_image_info_size) == 0)) {
+		for(pri.pri_addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, pri.pri_addr, &pri, sizeof(pri)) == sizeof(pri); pri.pri_addr += pri.pri_sz) {
+			if(pri.pri_prot == VM_PROT_READ && pri.pri_user_tag == VM_KERN_MEMORY_OSKEXT) {
+				if(kread_buf(pri.pri_addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
+					printf("kext_name: %s\n", kext_name);
+					if(kread_addr(pri.pri_addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
+						printf("kext_addr_slid: " KADDR_FMT "\n", kext_addr_slid);
+						if((kext_name_cf = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, kext_name, kCFStringEncodingUTF8, kCFAllocatorNull)) != NULL) {
+							if((kext_names = CFArrayCreate(kCFAllocatorDefault, (const void **)&kext_name_cf, 1, &kCFTypeArrayCallBacks)) != NULL) {
+								if((kexts_info = OSKextCopyLoadedKextInfo(kext_names, NULL)) != NULL) {
+									if(CFGetTypeID(kexts_info) == CFDictionaryGetTypeID() && CFDictionaryGetCount(kexts_info) == 1 && (kext_info = CFDictionaryGetValue(kexts_info, kext_name_cf)) != NULL && CFGetTypeID(kext_info) == CFDictionaryGetTypeID() && (kext_addr_cf = CFDictionaryGetValue(kext_info, CFSTR(kOSBundleLoadAddressKey))) != NULL && CFGetTypeID(kext_addr_cf) == CFNumberGetTypeID() && CFNumberGetValue(kext_addr_cf, kCFNumberSInt64Type, &kext_addr) && kext_addr_slid > kext_addr) {
+										kslide = kext_addr_slid - kext_addr;
 									}
-									CFRelease(kext_names);
+									CFRelease(kexts_info);
 								}
-								CFRelease(kext_name_cf);
+								CFRelease(kext_names);
 							}
+							CFRelease(kext_name_cf);
 						}
 					}
-					break;
 				}
+				break;
 			}
 		}
 	}
@@ -760,11 +764,13 @@ pfinder_init_offsets(void) {
 				if(CFStringCompare(cf_str, CFSTR("4903.200.199.12.3"), kCFCompareNumerically) != kCFCompareLessThan) {
 					proc_task_off = 0x10;
 					proc_p_pid_off = 0x60;
-					vm_object_wimg_bits_off = 0xA4;
 					if(CFStringCompare(cf_str, CFSTR("6041.0.0.110.11"), kCFCompareNumerically) != kCFCompareLessThan) {
 						task_map_off = 0x28;
 						if(CFStringCompare(cf_str, CFSTR("6110.0.0.120.8"), kCFCompareNumerically) != kCFCompareLessThan) {
 							proc_p_pid_off = 0x68;
+							if(CFStringCompare(cf_str, CFSTR("6153.40.121.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
+								vm_object_wimg_bits_off = 0xA4;
+							}
 						}
 					}
 				}
