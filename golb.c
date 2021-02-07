@@ -1053,7 +1053,7 @@ golb_flush_core_tlb_asid(void) {
 
 kaddr_t
 golb_find_phys(kaddr_t virt) {
-	kaddr_t vphys, vm_page, virt_off = virt & vm_kernel_page_mask;
+	kaddr_t vphys, vm_page, virt_off = virt & vm_page_mask;
 	vm_map_entry_t vm_entry;
 	vm_page_t m;
 
@@ -1082,19 +1082,19 @@ golb_unmap(golb_ctx_t ctx) {
 	}
 	golb_flush_core_tlb_asid();
 	free(ctx.pages);
-	mach_vm_deallocate(mach_task_self(), trunc_page_kernel(ctx.virt), ctx.page_cnt << arm_pgshift);
+	mach_vm_deallocate(mach_task_self(), trunc_page(ctx.virt), ctx.page_cnt << arm_pgshift);
 }
 
 kern_return_t
 golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
-	kaddr_t phys_off = phys & vm_kernel_page_mask, vm_page, vphys = 0, pv_h, ptep = 0, pte;
+	kaddr_t phys_off = phys & vm_page_mask, vm_page, vphys = 0, pv_h, ptep = 0, pte;
 	mach_vm_offset_t map_off;
 	vm_map_entry_t vm_entry;
 	uint32_t flags;
 	vm_page_t m;
 
 	phys -= phys_off;
-	if((sz = round_page_kernel(sz + phys_off)) != 0 && mach_vm_allocate(mach_task_self(), &ctx->virt, sz, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
+	if((sz = round_page(sz + phys_off)) != 0 && mach_vm_allocate(mach_task_self(), &ctx->virt, sz, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
 		printf("virt: " KADDR_FMT "\n", ctx->virt);
 		if(kread_buf(our_map + vm_map_flags_off, &flags, sizeof(flags)) == KERN_SUCCESS) {
 			printf("flags: 0x%" PRIX32 "\n", flags);

@@ -38,6 +38,7 @@
 #define KEY_SELECT_UID1 (1U)
 #define PMGR_PS_RUN_MAX (15U)
 #define AES_CMD_DIR_MASK (15U)
+#define AES_AP_SZ (vm_page_size)
 #define KEY_SELECT_GID_AP_1 (2U)
 #define KEY_SELECT_GID_AP_2 (3U)
 #define TXT_IN_STS_RDY (1U << 0U)
@@ -64,7 +65,6 @@
 #define TXT_IN_CTRL_VAL_SET (1U << 0U)
 #define TXT_OUT_STS_VAL_SET (1U << 0U)
 #define CMD_FLAG_STOP_CMDS_SHIFT (26U)
-#define AES_AP_SZ (vm_kernel_page_size)
 #define KEY_IN_CTRL_MOD_ECB (0U << 13U)
 #define KEY_IN_CTRL_MOD_CBC (1U << 13U)
 #define KEY_IN_CTRL_DIR_DEC (0U << 12U)
@@ -410,7 +410,7 @@ aes_ap_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opts) 
 				return KERN_FAILURE;
 			}
 			printf("phys_dst: " KADDR_FMT "\n", phys_dst);
-			aes_len = MIN(len, MIN(vm_kernel_page_size - (phys_src & vm_kernel_page_mask), vm_kernel_page_size - (phys_dst & vm_kernel_page_mask)));
+			aes_len = MIN(len, MIN(vm_page_size - (phys_src & vm_page_mask), vm_page_size - (phys_dst & vm_page_mask)));
 			if(mach_vm_machine_attribute(mach_task_self(), virt_src, aes_len, MATTR_CACHE, &mattr_val) != KERN_SUCCESS || aes_ap_v2_cmd(cmd, phys_src, phys_dst, aes_len, opts) != KERN_SUCCESS || mach_vm_machine_attribute(mach_task_self(), virt_dst, aes_len, MATTR_CACHE, &mattr_val) != KERN_SUCCESS) {
 				return KERN_FAILURE;
 			}

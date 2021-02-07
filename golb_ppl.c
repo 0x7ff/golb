@@ -863,7 +863,7 @@ vm_page_get_phys_addr(kaddr_t vm_page) {
 void
 golb_term(void) {
 	kwrite_buf(target_vm_page + lowglo.pmap_mem_page_sz, &target_phys_page, sizeof(target_phys_page));
-	mach_vm_deallocate(mach_task_self(), target_virt, vm_kernel_page_size);
+	mach_vm_deallocate(mach_task_self(), target_virt, vm_page_size);
 	if(tfp0 != TASK_NULL) {
 		mach_port_deallocate(mach_task_self(), tfp0);
 	} else if(kmem_fd != -1) {
@@ -900,13 +900,13 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 			if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
 				kxpacd(&our_map);
 				printf("our_map: " KADDR_FMT "\n", our_map);
-				while(mach_vm_allocate(mach_task_self(), &target_virt, vm_kernel_page_size, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
+				while(mach_vm_allocate(mach_task_self(), &target_virt, vm_page_size, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
 					*(volatile kaddr_t *)target_virt = FAULT_MAGIC;
 					if(vm_map_lookup_entry(our_map, target_virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && kread_buf(vm_entry.vme_object, &packed_ptr, sizeof(packed_ptr)) == KERN_SUCCESS && (target_vm_page = vm_page_unpack_ptr(packed_ptr)) != 0 && target_vm_page != vm_entry.vme_object && (target_vm_page < lowglo.pmap_mem_start_addr || target_vm_page >= lowglo.pmap_mem_end_addr) && kread_buf(target_vm_page + lowglo.pmap_mem_page_sz, &target_phys_page, sizeof(target_phys_page)) == KERN_SUCCESS && kwrite_buf(vm_entry.vme_object + vm_object_wimg_bits_off, &wimg_bits, sizeof(wimg_bits)) == KERN_SUCCESS) {
 						printf("target_virt: " KADDR_FMT ", target_vm_page: " KADDR_FMT ", target_phys: " KADDR_FMT "\n", target_virt, target_vm_page, (kaddr_t)target_phys_page << vm_kernel_page_shift);
 						return KERN_SUCCESS;
 					}
-					mach_vm_deallocate(mach_task_self(), target_virt, vm_kernel_page_size);
+					mach_vm_deallocate(mach_task_self(), target_virt, vm_page_size);
 				}
 			}
 		}
@@ -927,7 +927,7 @@ golb_flush_core_tlb_asid(void) {
 
 kaddr_t
 golb_find_phys(kaddr_t virt) {
-	kaddr_t vphys, vm_page, virt_off = virt & vm_kernel_page_mask;
+	kaddr_t vphys, vm_page, virt_off = virt & vm_page_mask;
 	vm_map_entry_t vm_entry;
 	vm_page_t m;
 
@@ -949,7 +949,7 @@ golb_find_phys(kaddr_t virt) {
 
 void
 golb_unmap(golb_ctx_t ctx) {
-	mach_vm_deallocate(mach_task_self(), trunc_page_kernel(ctx.virt), ctx.page_cnt << vm_kernel_page_shift);
+	mach_vm_deallocate(mach_task_self(), trunc_page(ctx.virt), ctx.page_cnt << vm_page_shift);
 }
 
 __attribute__((__noreturn__)) static void
@@ -959,20 +959,20 @@ sigbus_handler(int signo) {
 
 kern_return_t
 golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
-	kaddr_t phys_off = phys & vm_kernel_page_mask, virt;
+	kaddr_t phys_off = phys & vm_page_mask, virt;
 	struct sigaction old_act, new_act;
 	vm_prot_t cur_prot, max_prot;
 	ppnum_t phys_page;
 
 	phys -= phys_off;
-	if((sz = round_page_kernel(sz + phys_off)) != 0 && mach_vm_protect(mach_task_self(), target_virt, vm_kernel_page_size, FALSE, prot) == KERN_SUCCESS && mach_vm_allocate(mach_task_self(), &ctx->virt, sz, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
+	if((sz = round_page(sz + phys_off)) != 0 && mach_vm_protect(mach_task_self(), target_virt, vm_page_size, FALSE, prot) == KERN_SUCCESS && mach_vm_allocate(mach_task_self(), &ctx->virt, sz, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
 		printf("virt: " KADDR_FMT "\n", ctx->virt);
 		if(sigaction(SIGBUS, NULL, &old_act) != -1) {
 			new_act.sa_flags = 0;
 			new_act.sa_handler = sigbus_handler;
 			if(sigemptyset(&new_act.sa_mask) != -1 && sigaction(SIGBUS, &new_act, NULL) != -1) {
-				for(phys_page = (ppnum_t)(phys >> vm_kernel_page_shift), virt = ctx->virt; virt - ctx->virt < sz; ++phys_page, virt += vm_kernel_page_size) {
-					if(kwrite_buf(target_vm_page + lowglo.pmap_mem_page_sz, &phys_page, sizeof(phys_page)) != KERN_SUCCESS || mach_vm_remap(mach_task_self(), &virt, vm_kernel_page_size, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), target_virt, FALSE, &cur_prot, &max_prot, VM_INHERIT_NONE) != KERN_SUCCESS) {
+				for(phys_page = (ppnum_t)(phys >> vm_kernel_page_shift), virt = ctx->virt; virt - ctx->virt < sz; ++phys_page, virt += vm_page_size) {
+					if(kwrite_buf(target_vm_page + lowglo.pmap_mem_page_sz, &phys_page, sizeof(phys_page)) != KERN_SUCCESS || mach_vm_remap(mach_task_self(), &virt, vm_page_size, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), target_virt, FALSE, &cur_prot, &max_prot, VM_INHERIT_NONE) != KERN_SUCCESS) {
 						break;
 					}
 					if(sigsetjmp(jbuf, 1) == 0) {
@@ -980,7 +980,7 @@ golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
 					}
 				}
 				if(sigaction(SIGBUS, &old_act, NULL) != -1 && virt - ctx->virt == sz) {
-					ctx->page_cnt = sz >> vm_kernel_page_shift;
+					ctx->page_cnt = sz >> vm_page_shift;
 					ctx->virt += phys_off;
 					return KERN_SUCCESS;
 				}
