@@ -81,8 +81,6 @@
 #define CMD_DATA_UPPER_ADDR_SRC_SHIFT (16U)
 #define CMD_DATA_UPPER_ADDR_DST_MASK (0xFFU)
 #define CMD_DATA_UPPER_ADDR_SRC_MASK (0xFFU)
-#define PMGR_AES0_PS_SZ (vm_kernel_page_size)
-#define PMGR_SECURITY_SZ (vm_kernel_page_size)
 #define AES_BLK_INT_STATUS_FLAG_CMD_UMASK (32U)
 #define AES_AP_BASE_ADDR (IO_BASE + aes_ap_base_off)
 #define PMGR_AES0_PS_BASE_ADDR (IO_BASE + pmgr_aes0_ps_off)
@@ -215,8 +213,8 @@ aes_ap_term(void) {
 static kern_return_t
 aes_ap_init(void) {
 	if(golb_map(&aes_ap_ctx, AES_AP_BASE_ADDR, AES_AP_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-		if(golb_map(&pmgr_aes0_ps_ctx, PMGR_AES0_PS_BASE_ADDR, PMGR_AES0_PS_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-			if(!aes_ap_v2 || golb_map(&pmgr_security_ctx, PMGR_SECURITY_BASE_ADDR, PMGR_SECURITY_SZ, VM_PROT_READ) == KERN_SUCCESS) {
+		if(golb_map(&pmgr_aes0_ps_ctx, PMGR_AES0_PS_BASE_ADDR, sizeof(rPMGR_AES0_PS), VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
+			if(!aes_ap_v2 || golb_map(&pmgr_security_ctx, PMGR_SECURITY_BASE_ADDR, sizeof(rPMGR_SECURITY), VM_PROT_READ) == KERN_SUCCESS) {
 				return KERN_SUCCESS;
 			}
 			golb_unmap(pmgr_aes0_ps_ctx);
