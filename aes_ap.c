@@ -111,7 +111,7 @@
 
 static bool aes_ap_v2;
 static golb_ctx_t aes_ap_ctx, pmgr_aes0_ps_ctx, pmgr_security_ctx;
-static kaddr_t aes_ap_base_off, pmgr_security_base_off, pmgr_aes0_ps_off, aes_cmd_fifo_off = 0x200;
+static size_t aes_ap_base_off, pmgr_security_base_off, pmgr_aes0_ps_off, aes_cmd_fifo_off = 0x200;
 
 static struct {
 	uint32_t key_id, key[4], val[4];
@@ -492,7 +492,7 @@ main(int argc, char **argv) {
 	if(argc != 1 && argc != 6) {
 		printf("Usage: %s [enc/dec UID0/GID0/GID1 in_file out_file buf_sz]\n", argv[0]);
 	} else if(init_arm_globals() == KERN_SUCCESS) {
-		printf("aes_ap_base_off: " KADDR_FMT ", pmgr_aes0_ps_off: " KADDR_FMT "\n", aes_ap_base_off, pmgr_aes0_ps_off);
+		printf("aes_ap_base_off: 0x%zx, pmgr_aes0_ps_off: 0x%zx\n", aes_ap_base_off, pmgr_aes0_ps_off);
 		if(golb_init(0, NULL, NULL) == KERN_SUCCESS) {
 			if(aes_ap_init() == KERN_SUCCESS) {
 				if(argc == 1) {

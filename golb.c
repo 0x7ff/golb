@@ -881,6 +881,9 @@ pfinder_init_offsets(void) {
 							if(CFStringCompare(cf_str, CFSTR("7090.0.0.110.4"), kCFCompareNumerically) != kCFCompareLessThan) {
 								pmap_sw_asid_off = 0xDE;
 								pvh_high_flags |= PVH_FLAG_HASHED;
+								if(CFStringCompare(cf_str, CFSTR("7195.100.326.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
+									task_map_off = 0x20;
+								}
 							}
 						}
 					}

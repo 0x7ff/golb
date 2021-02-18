@@ -770,6 +770,9 @@ pfinder_init_offsets(void) {
 							proc_p_pid_off = 0x68;
 							if(CFStringCompare(cf_str, CFSTR("6153.40.121.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
 								vm_object_wimg_bits_off = 0xA4;
+								if(CFStringCompare(cf_str, CFSTR("7195.100.326.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
+									task_map_off = 0x20;
+								}
 							}
 						}
 					}
