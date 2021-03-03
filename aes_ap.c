@@ -1,4 +1,4 @@
-/* Copyright 2020 0x7ff
+/* Copyright 2021 0x7ff
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -369,7 +369,6 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 		do {
 			rPMGR_AES0_PS |= PMGR_PS_RUN_MAX;
 			while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
-			__asm__ volatile ("dmb ish" ::: "memory");
 			rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_CMD_UMASK;
 			rAES_CTRL = AES_BLK_CTRL_START_UMASK;
 			rAES_CMD_FIFO = key_cmd;

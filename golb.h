@@ -1,4 +1,4 @@
-/* Copyright 2020 0x7ff
+/* Copyright 2021 0x7ff
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ typedef struct {
 		kaddr_t ptep, pte;
 	} *pages;
 } golb_ctx_t;
-typedef kern_return_t (*kread_func_t)(kaddr_t, void *, mach_vm_size_t), (*kwrite_func_t)(kaddr_t, const void *, mach_msg_type_number_t);
+typedef kern_return_t (*kread_func_t)(kaddr_t, void *, size_t), (*kwrite_func_t)(kaddr_t, const void *, size_t);
 
 void
 golb_term(void);
