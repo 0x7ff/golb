@@ -80,7 +80,7 @@
 #	define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
-typedef int (*krw_0_kread_func_t)(kaddr_t, void *, size_t), (*krw_0_kwrite_func_t)(const void *, kaddr_t, size_t);
+typedef int (*krw_0_kbase_func_t)(kaddr_t *), (*krw_0_kread_func_t)(kaddr_t, void *, size_t), (*krw_0_kwrite_func_t)(const void *, kaddr_t, size_t);
 
 typedef struct {
 	struct section_64 s64;
@@ -131,6 +131,8 @@ static kread_func_t kread_buf;
 static task_t tfp0 = TASK_NULL;
 static ppnum_t target_phys_page;
 static kwrite_func_t kwrite_buf;
+static krw_0_kread_func_t krw_0_kread;
+static krw_0_kwrite_func_t krw_0_kwrite;
 static kaddr_t kslide, kernproc, lowglo_ptr, our_map, target_virt, target_vm_page;
 static size_t task_map_off, proc_task_off, proc_p_pid_off, vm_object_wimg_bits_off;
 
@@ -268,16 +270,12 @@ kdecompress(const void *src, size_t src_len, size_t *dst_len) {
 
 static kern_return_t
 kread_buf_krw_0(kaddr_t addr, void *buf, size_t sz) {
-	static krw_0_kread_func_t krw_0_kread;
-
-	return (krw_0_kread != NULL || (krw_0_kread = (krw_0_kread_func_t)dlsym(krw_0, "kread")) != NULL) && krw_0_kread(addr, buf, sz) == 0 ? KERN_SUCCESS : KERN_FAILURE;
+	return krw_0_kread(addr, buf, sz) == 0 ? KERN_SUCCESS : KERN_FAILURE;
 }
 
 static kern_return_t
 kwrite_buf_krw_0(kaddr_t addr, const void *buf, size_t sz) {
-	static krw_0_kwrite_func_t krw_0_kwrite;
-
-	return (krw_0_kwrite != NULL || (krw_0_kwrite = (krw_0_kwrite_func_t)dlsym(krw_0, "kwrite")) != NULL) && krw_0_kwrite(buf, addr, sz) == 0 ? KERN_SUCCESS : KERN_FAILURE;
+	return krw_0_kwrite(buf, addr, sz) == 0 ? KERN_SUCCESS : KERN_FAILURE;
 }
 
 static kern_return_t
@@ -663,34 +661,39 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 	CFDictionaryRef kexts_info, kext_info;
 	kaddr_t kext_addr, kext_addr_slid;
 	task_dyld_info_data_t dyld_info;
+	krw_0_kbase_func_t krw_0_kbase;
 	char kext_name[KMOD_MAX_NAME];
 	struct mach_header_64 mh64;
 	CFStringRef kext_name_cf;
 	CFNumberRef kext_addr_cf;
 	CFArrayRef kext_names;
 
-	if(kslide == 0 && (tfp0 == TASK_NULL || task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) != KERN_SUCCESS || (kslide = dyld_info.all_image_info_size) == 0)) {
-		for(pri.pri_addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, pri.pri_addr, &pri, sizeof(pri)) == sizeof(pri); pri.pri_addr += pri.pri_sz) {
-			if(pri.pri_prot == VM_PROT_READ && pri.pri_user_tag == VM_KERN_MEMORY_OSKEXT) {
-				if(kread_buf(pri.pri_addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
-					printf("kext_name: %s\n", kext_name);
-					if(kread_addr(pri.pri_addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
-						printf("kext_addr_slid: " KADDR_FMT "\n", kext_addr_slid);
-						if((kext_name_cf = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, kext_name, kCFStringEncodingUTF8, kCFAllocatorNull)) != NULL) {
-							if((kext_names = CFArrayCreate(kCFAllocatorDefault, (const void **)&kext_name_cf, 1, &kCFTypeArrayCallBacks)) != NULL) {
-								if((kexts_info = OSKextCopyLoadedKextInfo(kext_names, NULL)) != NULL) {
-									if(CFGetTypeID(kexts_info) == CFDictionaryGetTypeID() && CFDictionaryGetCount(kexts_info) == 1 && (kext_info = CFDictionaryGetValue(kexts_info, kext_name_cf)) != NULL && CFGetTypeID(kext_info) == CFDictionaryGetTypeID() && (kext_addr_cf = CFDictionaryGetValue(kext_info, CFSTR(kOSBundleLoadAddressKey))) != NULL && CFGetTypeID(kext_addr_cf) == CFNumberGetTypeID() && CFNumberGetValue(kext_addr_cf, kCFNumberSInt64Type, &kext_addr) && kext_addr_slid > kext_addr) {
-										kslide = kext_addr_slid - kext_addr;
+	if(kslide == 0) {
+		if(krw_0 != NULL && (krw_0_kbase = (krw_0_kbase_func_t)dlsym(krw_0, "kbase")) != NULL && krw_0_kbase(&kslide) == 0) {
+			kslide -= pfinder->base;
+		} else if(tfp0 == TASK_NULL || task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) != KERN_SUCCESS || (kslide = dyld_info.all_image_info_size) == 0) {
+			for(pri.pri_addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, pri.pri_addr, &pri, sizeof(pri)) == sizeof(pri); pri.pri_addr += pri.pri_sz) {
+				if(pri.pri_prot == VM_PROT_READ && pri.pri_user_tag == VM_KERN_MEMORY_OSKEXT) {
+					if(kread_buf(pri.pri_addr + LOADED_KEXT_SUMMARY_HDR_NAME_OFF, kext_name, sizeof(kext_name)) == KERN_SUCCESS) {
+						printf("kext_name: %s\n", kext_name);
+						if(kread_addr(pri.pri_addr + LOADED_KEXT_SUMMARY_HDR_ADDR_OFF, &kext_addr_slid) == KERN_SUCCESS) {
+							printf("kext_addr_slid: " KADDR_FMT "\n", kext_addr_slid);
+							if((kext_name_cf = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, kext_name, kCFStringEncodingUTF8, kCFAllocatorNull)) != NULL) {
+								if((kext_names = CFArrayCreate(kCFAllocatorDefault, (const void **)&kext_name_cf, 1, &kCFTypeArrayCallBacks)) != NULL) {
+									if((kexts_info = OSKextCopyLoadedKextInfo(kext_names, NULL)) != NULL) {
+										if(CFGetTypeID(kexts_info) == CFDictionaryGetTypeID() && CFDictionaryGetCount(kexts_info) == 1 && (kext_info = CFDictionaryGetValue(kexts_info, kext_name_cf)) != NULL && CFGetTypeID(kext_info) == CFDictionaryGetTypeID() && (kext_addr_cf = CFDictionaryGetValue(kext_info, CFSTR(kOSBundleLoadAddressKey))) != NULL && CFGetTypeID(kext_addr_cf) == CFNumberGetTypeID() && CFNumberGetValue(kext_addr_cf, kCFNumberSInt64Type, &kext_addr) && kext_addr_slid > kext_addr) {
+											kslide = kext_addr_slid - kext_addr;
+										}
+										CFRelease(kexts_info);
 									}
-									CFRelease(kexts_info);
+									CFRelease(kext_names);
 								}
-								CFRelease(kext_names);
+								CFRelease(kext_name_cf);
 							}
-							CFRelease(kext_name_cf);
 						}
 					}
+					break;
 				}
-				break;
 			}
 		}
 	}
@@ -906,7 +909,7 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 	if(_kread_buf != NULL && _kwrite_buf != NULL) {
 		kread_buf = _kread_buf;
 		kwrite_buf = _kwrite_buf;
-	} else if((krw_0 = dlopen("/usr/lib/libkrw.0.dylib", RTLD_LAZY)) != NULL) {
+	} else if((krw_0 = dlopen("/usr/lib/libkrw.0.dylib", RTLD_LAZY)) != NULL && (krw_0_kread = (krw_0_kread_func_t)dlsym(krw_0, "kread")) != NULL && (krw_0_kwrite = (krw_0_kwrite_func_t)dlsym(krw_0, "kwrite")) != NULL) {
 		kread_buf = kread_buf_krw_0;
 		kwrite_buf = kwrite_buf_krw_0;
 	} else if(init_tfp0() == KERN_SUCCESS) {
