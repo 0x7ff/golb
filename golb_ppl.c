@@ -888,10 +888,10 @@ void
 golb_term(void) {
 	kwrite_buf(target_vm_page + lowglo.pmap_mem_page_sz, &target_phys_page, sizeof(target_phys_page));
 	mach_vm_deallocate(mach_task_self(), target_virt, vm_page_size);
-	if(krw_0 != NULL) {
-		dlclose(krw_0);
-	} else if(tfp0 != TASK_NULL) {
+	if(tfp0 != TASK_NULL) {
 		mach_port_deallocate(mach_task_self(), tfp0);
+	} else if(krw_0 != NULL) {
+		dlclose(krw_0);
 	} else if(kmem_fd != -1) {
 		close(kmem_fd);
 	}
@@ -909,13 +909,13 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 	if(_kread_buf != NULL && _kwrite_buf != NULL) {
 		kread_buf = _kread_buf;
 		kwrite_buf = _kwrite_buf;
-	} else if((krw_0 = dlopen("/usr/lib/libkrw.0.dylib", RTLD_LAZY)) != NULL && (krw_0_kread = (krw_0_kread_func_t)dlsym(krw_0, "kread")) != NULL && (krw_0_kwrite = (krw_0_kwrite_func_t)dlsym(krw_0, "kwrite")) != NULL) {
-		kread_buf = kread_buf_krw_0;
-		kwrite_buf = kwrite_buf_krw_0;
 	} else if(init_tfp0() == KERN_SUCCESS) {
 		printf("tfp0: 0x%" PRIX32 "\n", tfp0);
 		kread_buf = kread_buf_tfp0;
 		kwrite_buf = kwrite_buf_tfp0;
+	} else if((krw_0 = dlopen("/usr/lib/libkrw.0.dylib", RTLD_LAZY)) != NULL && (krw_0_kread = (krw_0_kread_func_t)dlsym(krw_0, "kread")) != NULL && (krw_0_kwrite = (krw_0_kwrite_func_t)dlsym(krw_0, "kwrite")) != NULL) {
+		kread_buf = kread_buf_krw_0;
+		kwrite_buf = kwrite_buf_krw_0;
 	} else if((kmem_fd = open("/dev/kmem", O_RDWR | O_CLOEXEC)) != -1) {
 		kread_buf = kread_buf_kmem;
 		kwrite_buf = kwrite_buf_kmem;
@@ -941,10 +941,10 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 		}
 		setpriority(PRIO_PROCESS, 0, 0);
 	}
-	if(krw_0 != NULL) {
-		dlclose(krw_0);
-	} else if(tfp0 != TASK_NULL) {
+	if(tfp0 != TASK_NULL) {
 		mach_port_deallocate(mach_task_self(), tfp0);
+	} else if(krw_0 != NULL) {
+		dlclose(krw_0);
 	} else if(kmem_fd != -1) {
 		close(kmem_fd);
 	}
