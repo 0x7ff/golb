@@ -1031,10 +1031,8 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 	} else if((kmem_fd = open("/dev/kmem", O_RDWR | O_CLOEXEC)) != -1) {
 		kread_buf = kread_buf_kmem;
 		kwrite_buf = kwrite_buf_kmem;
-	} else {
-		return KERN_FAILURE;
 	}
-	if(setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1) {
+	if(kread_buf != NULL && kwrite_buf != NULL && setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1) {
 		if(init_arm_pgshift() == KERN_SUCCESS) {
 			printf("arm_pgshift: %u\n", arm_pgshift);
 			if(pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS) {
