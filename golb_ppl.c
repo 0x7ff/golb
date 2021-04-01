@@ -20,6 +20,7 @@
 #include <mach-o/nlist.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/utsname.h>
 
 #define LZSS_F (18)
@@ -80,7 +81,8 @@
 #	define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
-typedef int (*krw_0_kbase_func_t)(kaddr_t *), (*krw_0_kread_func_t)(kaddr_t, void *, size_t), (*krw_0_kwrite_func_t)(const void *, kaddr_t, size_t);
+typedef kern_return_t (*kernrw_0_kbase_func_t)(kaddr_t *), (*kernrw_0_kread_func_t)(kaddr_t, void *, size_t), (*kernrw_0_kwrite_func_t)(kaddr_t, const void *, size_t);
+typedef int (*krw_0_kbase_func_t)(kaddr_t *), (*krw_0_kread_func_t)(kaddr_t, void *, size_t), (*krw_0_kwrite_func_t)(const void *, kaddr_t, size_t), (*kernrw_0_req_kernrw_func_t)(void);
 
 typedef struct {
 	struct section_64 s64;
@@ -123,16 +125,19 @@ mach_vm_protect(vm_map_t, mach_vm_address_t, mach_vm_size_t, boolean_t, vm_prot_
 kern_return_t
 mach_vm_remap(vm_map_t, mach_vm_address_t *, mach_vm_size_t, mach_vm_offset_t, int, vm_map_t, mach_vm_address_t, boolean_t, vm_prot_t *, vm_prot_t *, vm_inherit_t);
 
-static void *krw_0;
 static lowglo_t lowglo;
 static sigjmp_buf jbuf;
 static int kmem_fd = -1;
+static unsigned t1sz_boot;
+static void *krw_0, *kernrw_0;
 static kread_func_t kread_buf;
 static task_t tfp0 = TASK_NULL;
 static ppnum_t target_phys_page;
 static kwrite_func_t kwrite_buf;
 static krw_0_kread_func_t krw_0_kread;
 static krw_0_kwrite_func_t krw_0_kwrite;
+static kernrw_0_kread_func_t kernrw_0_kread;
+static kernrw_0_kwrite_func_t kernrw_0_kwrite;
 static kaddr_t kslide, kernproc, lowglo_ptr, our_map, target_virt, target_vm_page;
 static size_t task_map_off, proc_task_off, proc_p_pid_off, vm_object_wimg_bits_off;
 
@@ -148,11 +153,9 @@ sextract64(uint64_t val, unsigned start, unsigned len) {
 
 static void
 kxpacd(kaddr_t *addr) {
-#if defined(__arm64e__) || TARGET_OS_OSX
-	__asm__ volatile("xpacd %0" : "+r"(*addr));
-#else
-	(void)addr;
-#endif
+	if(t1sz_boot != 0) {
+		*addr |= ~((1ULL << (64U - t1sz_boot)) - 1U);
+	}
 }
 
 static size_t
@@ -276,6 +279,16 @@ kread_buf_krw_0(kaddr_t addr, void *buf, size_t sz) {
 static kern_return_t
 kwrite_buf_krw_0(kaddr_t addr, const void *buf, size_t sz) {
 	return krw_0_kwrite(buf, addr, sz) == 0 ? KERN_SUCCESS : KERN_FAILURE;
+}
+
+static kern_return_t
+kread_buf_kernrw_0(kaddr_t addr, void *buf, size_t sz) {
+	return kernrw_0_kread(addr, buf, sz);
+}
+
+static kern_return_t
+kwrite_buf_kernrw_0(kaddr_t addr, const void *buf, size_t sz) {
+	return kernrw_0_kwrite(addr, buf, sz);
 }
 
 static kern_return_t
@@ -659,6 +672,7 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 	} pri;
 	mach_msg_type_number_t cnt = TASK_DYLD_INFO_COUNT;
 	CFDictionaryRef kexts_info, kext_info;
+	kernrw_0_kbase_func_t kernrw_0_kbase;
 	kaddr_t kext_addr, kext_addr_slid;
 	task_dyld_info_data_t dyld_info;
 	krw_0_kbase_func_t krw_0_kbase;
@@ -669,7 +683,7 @@ pfinder_init_kbase(pfinder_t *pfinder) {
 	CFArrayRef kext_names;
 
 	if(kslide == 0) {
-		if(krw_0 != NULL && (krw_0_kbase = (krw_0_kbase_func_t)dlsym(krw_0, "kbase")) != NULL && krw_0_kbase(&kslide) == 0) {
+		if((krw_0 != NULL && (krw_0_kbase = (krw_0_kbase_func_t)dlsym(krw_0, "kbase")) != NULL && krw_0_kbase(&kslide) == 0) || (kernrw_0 != NULL && (kernrw_0_kbase = (kernrw_0_kbase_func_t)dlsym(kernrw_0, "kernRW_getKernelBase")) != NULL && kernrw_0_kbase(&kslide) == KERN_SUCCESS)) {
 			kslide -= pfinder->base;
 		} else if(tfp0 == TASK_NULL || task_info(tfp0, TASK_DYLD_INFO, (task_info_t)&dyld_info, &cnt) != KERN_SUCCESS || (kslide = dyld_info.all_image_info_size) == 0) {
 			for(pri.pri_addr = 0; proc_pidinfo(0, PROC_PIDREGIONINFO, pri.pri_addr, &pri, sizeof(pri)) == sizeof(pri); pri.pri_addr += pri.pri_sz) {
@@ -892,6 +906,8 @@ golb_term(void) {
 		mach_port_deallocate(mach_task_self(), tfp0);
 	} else if(krw_0 != NULL) {
 		dlclose(krw_0);
+	} else if(kernrw_0 != NULL) {
+		dlclose(kernrw_0);
 	} else if(kmem_fd != -1) {
 		close(kmem_fd);
 	}
@@ -900,51 +916,69 @@ golb_term(void) {
 
 kern_return_t
 golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
+	kernrw_0_req_kernrw_func_t kernrw_0_req;
 	uint8_t wimg_bits = VM_WIMG_IO;
 	vm_map_entry_t vm_entry;
+	cpu_subtype_t subtype;
 	uint32_t packed_ptr;
 	kaddr_t our_task;
+	size_t sz;
 
-	kslide = _kslide;
-	if(_kread_buf != NULL && _kwrite_buf != NULL) {
-		kread_buf = _kread_buf;
-		kwrite_buf = _kwrite_buf;
-	} else if(init_tfp0() == KERN_SUCCESS) {
-		printf("tfp0: 0x%" PRIX32 "\n", tfp0);
-		kread_buf = kread_buf_tfp0;
-		kwrite_buf = kwrite_buf_tfp0;
-	} else if((krw_0 = dlopen("/usr/lib/libkrw.0.dylib", RTLD_LAZY)) != NULL && (krw_0_kread = (krw_0_kread_func_t)dlsym(krw_0, "kread")) != NULL && (krw_0_kwrite = (krw_0_kwrite_func_t)dlsym(krw_0, "kwrite")) != NULL) {
-		kread_buf = kread_buf_krw_0;
-		kwrite_buf = kwrite_buf_krw_0;
-	} else if((kmem_fd = open("/dev/kmem", O_RDWR | O_CLOEXEC)) != -1) {
-		kread_buf = kread_buf_kmem;
-		kwrite_buf = kwrite_buf_kmem;
-	}
-	if(kread_buf != NULL && kwrite_buf != NULL && setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1) {
-		if(pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && find_task(getpid(), &our_task) == KERN_SUCCESS) {
-			kxpacd(&our_task);
-			printf("our_task: " KADDR_FMT "\n", our_task);
-			if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
-				kxpacd(&our_map);
-				printf("our_map: " KADDR_FMT "\n", our_map);
-				while(mach_vm_allocate(mach_task_self(), &target_virt, vm_page_size, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
-					*(volatile kaddr_t *)target_virt = FAULT_MAGIC;
-					if(vm_map_lookup_entry(our_map, target_virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && kread_buf(vm_entry.vme_object, &packed_ptr, sizeof(packed_ptr)) == KERN_SUCCESS && (target_vm_page = vm_page_unpack_ptr(packed_ptr)) != 0 && target_vm_page != vm_entry.vme_object && (target_vm_page < lowglo.pmap_mem_start_addr || target_vm_page >= lowglo.pmap_mem_end_addr) && kread_buf(target_vm_page + lowglo.pmap_mem_page_sz, &target_phys_page, sizeof(target_phys_page)) == KERN_SUCCESS && kwrite_buf(vm_entry.vme_object + vm_object_wimg_bits_off, &wimg_bits, sizeof(wimg_bits)) == KERN_SUCCESS) {
-						printf("target_virt: " KADDR_FMT ", target_vm_page: " KADDR_FMT ", target_phys: " KADDR_FMT "\n", target_virt, target_vm_page, (kaddr_t)target_phys_page << vm_kernel_page_shift);
-						return KERN_SUCCESS;
+	sz = sizeof(subtype);
+	if(sysctlbyname("hw.cpusubtype", &subtype, &sz, NULL, 0) == 0) {
+		if(subtype == CPU_SUBTYPE_ARM64E) {
+#if TARGET_OS_OSX
+			t1sz_boot = 17;
+#else
+			t1sz_boot = 25;
+#endif
+		}
+		kslide = _kslide;
+		if(_kread_buf != NULL && _kwrite_buf != NULL) {
+			kread_buf = _kread_buf;
+			kwrite_buf = _kwrite_buf;
+		} else if(init_tfp0() == KERN_SUCCESS) {
+			printf("tfp0: 0x%" PRIX32 "\n", tfp0);
+			kread_buf = kread_buf_tfp0;
+			kwrite_buf = kwrite_buf_tfp0;
+		} else if((krw_0 = dlopen("/usr/lib/libkrw.0.dylib", RTLD_LAZY)) != NULL && (krw_0_kread = (krw_0_kread_func_t)dlsym(krw_0, "kread")) != NULL && (krw_0_kwrite = (krw_0_kwrite_func_t)dlsym(krw_0, "kwrite")) != NULL) {
+			kread_buf = kread_buf_krw_0;
+			kwrite_buf = kwrite_buf_krw_0;
+		} else if((kernrw_0 = dlopen("/usr/lib/libkernrw.0.dylib", RTLD_LAZY)) != NULL && (kernrw_0_req = (kernrw_0_req_kernrw_func_t)dlsym(kernrw_0, "requestKernRw")) != NULL && kernrw_0_req() == 0 && (kernrw_0_kread = (kernrw_0_kread_func_t)dlsym(kernrw_0, "kernRW_readbuf")) != NULL && (kernrw_0_kwrite = (kernrw_0_kwrite_func_t)dlsym(kernrw_0, "kernRW_writebuf")) != NULL) {
+			kread_buf = kread_buf_kernrw_0;
+			kwrite_buf = kwrite_buf_kernrw_0;
+		} else if((kmem_fd = open("/dev/kmem", O_RDWR | O_CLOEXEC)) != -1) {
+			kread_buf = kread_buf_kmem;
+			kwrite_buf = kwrite_buf_kmem;
+		}
+		if(kread_buf != NULL && kwrite_buf != NULL && setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1) {
+			if(pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && find_task(getpid(), &our_task) == KERN_SUCCESS) {
+				kxpacd(&our_task);
+				printf("our_task: " KADDR_FMT "\n", our_task);
+				if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
+					kxpacd(&our_map);
+					printf("our_map: " KADDR_FMT "\n", our_map);
+					while(mach_vm_allocate(mach_task_self(), &target_virt, vm_page_size, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
+						*(volatile kaddr_t *)target_virt = FAULT_MAGIC;
+						if(vm_map_lookup_entry(our_map, target_virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && kread_buf(vm_entry.vme_object, &packed_ptr, sizeof(packed_ptr)) == KERN_SUCCESS && (target_vm_page = vm_page_unpack_ptr(packed_ptr)) != 0 && target_vm_page != vm_entry.vme_object && (target_vm_page < lowglo.pmap_mem_start_addr || target_vm_page >= lowglo.pmap_mem_end_addr) && kread_buf(target_vm_page + lowglo.pmap_mem_page_sz, &target_phys_page, sizeof(target_phys_page)) == KERN_SUCCESS && kwrite_buf(vm_entry.vme_object + vm_object_wimg_bits_off, &wimg_bits, sizeof(wimg_bits)) == KERN_SUCCESS) {
+							printf("target_virt: " KADDR_FMT ", target_vm_page: " KADDR_FMT ", target_phys: " KADDR_FMT "\n", target_virt, target_vm_page, (kaddr_t)target_phys_page << vm_kernel_page_shift);
+							return KERN_SUCCESS;
+						}
+						mach_vm_deallocate(mach_task_self(), target_virt, vm_page_size);
 					}
-					mach_vm_deallocate(mach_task_self(), target_virt, vm_page_size);
 				}
 			}
+			setpriority(PRIO_PROCESS, 0, 0);
 		}
-		setpriority(PRIO_PROCESS, 0, 0);
-	}
-	if(tfp0 != TASK_NULL) {
-		mach_port_deallocate(mach_task_self(), tfp0);
-	} else if(krw_0 != NULL) {
-		dlclose(krw_0);
-	} else if(kmem_fd != -1) {
-		close(kmem_fd);
+		if(tfp0 != TASK_NULL) {
+			mach_port_deallocate(mach_task_self(), tfp0);
+		} else if(krw_0 != NULL) {
+			dlclose(krw_0);
+		} else if(kernrw_0 != NULL) {
+			dlclose(kernrw_0);
+		} else if(kmem_fd != -1) {
+			close(kmem_fd);
+		}
 	}
 	return KERN_FAILURE;
 }
