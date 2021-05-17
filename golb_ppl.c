@@ -81,7 +81,7 @@
 #	define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
-typedef kern_return_t (*kernrw_0_kbase_func_t)(kaddr_t *), (*kernrw_0_kread_func_t)(kaddr_t, void *, size_t), (*kernrw_0_kwrite_func_t)(kaddr_t, const void *, size_t);
+typedef kern_return_t (*kernrw_0_kbase_func_t)(kaddr_t *);
 typedef int (*krw_0_kbase_func_t)(kaddr_t *), (*krw_0_kread_func_t)(kaddr_t, void *, size_t), (*krw_0_kwrite_func_t)(const void *, kaddr_t, size_t), (*kernrw_0_req_kernrw_func_t)(void);
 
 typedef struct {
@@ -136,8 +136,6 @@ static ppnum_t target_phys_page;
 static kwrite_func_t kwrite_buf;
 static krw_0_kread_func_t krw_0_kread;
 static krw_0_kwrite_func_t krw_0_kwrite;
-static kernrw_0_kread_func_t kernrw_0_kread;
-static kernrw_0_kwrite_func_t kernrw_0_kwrite;
 static kaddr_t kslide, kernproc, lowglo_ptr, our_map, target_virt, target_vm_page;
 static size_t task_map_off, proc_task_off, proc_p_pid_off, vm_object_wimg_bits_off;
 
@@ -279,16 +277,6 @@ kread_buf_krw_0(kaddr_t addr, void *buf, size_t sz) {
 static kern_return_t
 kwrite_buf_krw_0(kaddr_t addr, const void *buf, size_t sz) {
 	return krw_0_kwrite(buf, addr, sz) == 0 ? KERN_SUCCESS : KERN_FAILURE;
-}
-
-static kern_return_t
-kread_buf_kernrw_0(kaddr_t addr, void *buf, size_t sz) {
-	return kernrw_0_kread(addr, buf, sz);
-}
-
-static kern_return_t
-kwrite_buf_kernrw_0(kaddr_t addr, const void *buf, size_t sz) {
-	return kernrw_0_kwrite(addr, buf, sz);
 }
 
 static kern_return_t
@@ -941,9 +929,9 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 			printf("tfp0: 0x%" PRIX32 "\n", tfp0);
 			kread_buf = kread_buf_tfp0;
 			kwrite_buf = kwrite_buf_tfp0;
-		} else if((kernrw_0 = dlopen("/usr/lib/libkernrw.0.dylib", RTLD_LAZY)) != NULL && (kernrw_0_req = (kernrw_0_req_kernrw_func_t)dlsym(kernrw_0, "requestKernRw")) != NULL && kernrw_0_req() == 0 && (kernrw_0_kread = (kernrw_0_kread_func_t)dlsym(kernrw_0, "kernRW_readbuf")) != NULL && (kernrw_0_kwrite = (kernrw_0_kwrite_func_t)dlsym(kernrw_0, "kernRW_writebuf")) != NULL) {
-			kread_buf = kread_buf_kernrw_0;
-			kwrite_buf = kwrite_buf_kernrw_0;
+		} else if((kernrw_0 = dlopen("/usr/lib/libkernrw.0.dylib", RTLD_LAZY)) != NULL && (kernrw_0_req = (kernrw_0_req_kernrw_func_t)dlsym(kernrw_0, "requestKernRw")) != NULL && kernrw_0_req() == 0) {
+			kread_buf = (kread_func_t)dlsym(kernrw_0, "kernRW_readbuf");
+			kwrite_buf = (kwrite_func_t)dlsym(kernrw_0, "kernRW_writebuf");
 		} else if((krw_0 = dlopen("/usr/lib/libkrw.0.dylib", RTLD_LAZY)) != NULL && (krw_0_kread = (krw_0_kread_func_t)dlsym(krw_0, "kread")) != NULL && (krw_0_kwrite = (krw_0_kwrite_func_t)dlsym(krw_0, "kwrite")) != NULL) {
 			kread_buf = kread_buf_krw_0;
 			kwrite_buf = kwrite_buf_krw_0;
