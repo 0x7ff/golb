@@ -93,6 +93,7 @@
 #define IS_MOV_X(a) (((a) & 0xFFE00000U) == 0xAA000000U)
 #define LDR_W_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 2U)
 #define LDR_X_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 3U)
+#define IS_LDR_X_UXTW_3(a) (((a) & 0xFFE0FC00U) == 0xF8605800U)
 #define IS_LDR_W_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xB9400000U)
 #define IS_LDR_X_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xF9400000U)
 #define ADR_IMM(a) ((sextract64(a, 5, 19) << 2U) | extract32(a, 29, 2))
@@ -157,14 +158,13 @@ typedef struct {
 
 static lowglo_t lowglo;
 static int kmem_fd = -1;
-static unsigned t1sz_boot;
-static unsigned arm_pgshift;
 static boot_args_t boot_args;
 static void *krw_0, *kernrw_0;
 static kread_func_t kread_buf;
 static task_t tfp0 = TASK_NULL;
 static kwrite_func_t kwrite_buf;
 static krw_0_kread_func_t krw_0_kread;
+static unsigned t1sz_boot, arm_pgshift;
 static krw_0_kwrite_func_t krw_0_kwrite;
 static size_t task_map_off, proc_task_off, proc_p_pid_off, pmap_sw_asid_off, vm_map_flags_off;
 static kaddr_t kslide, pvh_high_flags, kernproc, pv_head_table_ptr, const_boot_args, lowglo_ptr, pv_head_table, our_map, our_pmap;
@@ -691,7 +691,10 @@ pfinder_kernproc(pfinder_t pfinder) {
 	if(ref != 0) {
 		return ref;
 	}
-	for(ref = pfinder_xref_str(pfinder, "\"Should never have an EVFILT_READ except for reg or fifo.\"", 0); sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
+	if((ref = pfinder_xref_str(pfinder, "\"Should never have an EVFILT_READ except for reg or fifo.\"", 0)) == 0) {
+		ref = pfinder_xref_str(pfinder, "Should never have an EVFILT_READ except for reg or fifo. @%s:%d", 0);
+	}
+	for(; sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
 		if(IS_ADRP(insns[0]) && IS_LDR_X_UNSIGNED_IMM(insns[1]) && RD(insns[1]) == 3) {
 			return pfinder_xref_rd(pfinder, RD(insns[1]), ref, 0);
 		}
@@ -707,7 +710,13 @@ pfinder_pv_head_table_ptr(pfinder_t pfinder) {
 	if(ref != 0) {
 		return ref;
 	}
-	if((ref = pfinder_xref_str(pfinder, "\"pmap_init_pte_page(): invalid PVH type for pte_p %p\"", 0)) != 0) {
+	if((ref = pfinder_xref_str(pfinder, "pmap_init_pte_page(): invalid PVH type for pte_p %p @%s:%d", 0)) != 0) {
+		for(; sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
+			if(IS_ADRP(insns[0]) && IS_LDR_X_UNSIGNED_IMM(insns[1]) && IS_LDR_X_UXTW_3(insns[2])) {
+				return pfinder_xref_rd(pfinder, RD(insns[1]), ref, 0);
+			}
+		}
+	} else if((ref = pfinder_xref_str(pfinder, "\"pmap_init_pte_page(): invalid PVH type for pte_p %p\"", 0)) != 0) {
 		for(; sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
 			if(IS_ADRP(insns[0]) && IS_LDR_X_UNSIGNED_IMM(insns[1]) && IS_MOV_X(insns[2]) && RD(insns[2]) == 0) {
 				return pfinder_xref_rd(pfinder, RD(insns[1]), ref, 0);
@@ -901,6 +910,10 @@ pfinder_init_offsets(void) {
 								pvh_high_flags |= PVH_FLAG_HASHED;
 								if(CFStringCompare(cf_str, CFSTR("7195.100.326.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
 									task_map_off = 0x20;
+									if(CFStringCompare(cf_str, CFSTR("7938.0.0.111.2"), kCFCompareNumerically) != kCFCompareLessThan) {
+										task_map_off = 0x28;
+										pmap_sw_asid_off = 0x96;
+									}
 								}
 							}
 						}

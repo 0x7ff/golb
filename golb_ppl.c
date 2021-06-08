@@ -791,6 +791,9 @@ pfinder_init_offsets(void) {
 								vm_object_wimg_bits_off = 0xA4;
 								if(CFStringCompare(cf_str, CFSTR("7195.100.326.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
 									task_map_off = 0x20;
+									if(CFStringCompare(cf_str, CFSTR("7938.0.0.111.2"), kCFCompareNumerically) != kCFCompareLessThan) {
+										task_map_off = 0x28;
+									}
 								}
 							}
 						}
