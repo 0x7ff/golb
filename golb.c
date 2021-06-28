@@ -691,8 +691,8 @@ pfinder_kernproc(pfinder_t pfinder) {
 	if(ref != 0) {
 		return ref;
 	}
-	if((ref = pfinder_xref_str(pfinder, "\"Should never have an EVFILT_READ except for reg or fifo.\"", 0)) == 0) {
-		ref = pfinder_xref_str(pfinder, "Should never have an EVFILT_READ except for reg or fifo. @%s:%d", 0);
+	if((ref = pfinder_xref_str(pfinder, "Should never have an EVFILT_READ except for reg or fifo. @%s:%d", 0)) == 0) {
+		ref = pfinder_xref_str(pfinder, "\"Should never have an EVFILT_READ except for reg or fifo.\"", 0);
 	}
 	for(; sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
 		if(IS_ADRP(insns[0]) && IS_LDR_X_UNSIGNED_IMM(insns[1]) && RD(insns[1]) == 3) {
@@ -913,6 +913,9 @@ pfinder_init_offsets(void) {
 									if(CFStringCompare(cf_str, CFSTR("7938.0.0.111.2"), kCFCompareNumerically) != kCFCompareLessThan) {
 										task_map_off = 0x28;
 										pmap_sw_asid_off = 0x96;
+										if(CFStringCompare(cf_str, CFSTR("8011.0.0.121.4"), kCFCompareNumerically) != kCFCompareLessThan) {
+											vm_map_flags_off = 0x11C;
+										}
 									}
 								}
 							}
@@ -1134,10 +1137,8 @@ golb_find_phys(kaddr_t virt) {
 
 void
 golb_unmap(golb_ctx_t ctx) {
-	size_t i;
-
-	for(i = 0; i < ctx.page_cnt; ++i) {
-		kwrite_addr(ctx.pages[i].ptep, ctx.pages[i].pte);
+	while(ctx.page_cnt-- != 0) {
+		kwrite_addr(ctx.pages[ctx.page_cnt].ptep, ctx.pages[ctx.page_cnt].pte);
 	}
 	golb_flush_core_tlb_asid();
 	free(ctx.pages);
