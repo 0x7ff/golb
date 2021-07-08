@@ -427,7 +427,7 @@ aes_ap_test(void) {
 		if(aes_ap_cmd(AES_CMD_CBC | AES_CMD_ENC, uid_key_seeds[i].key, uid_key_seeds[i].val, sizeof(uid_key_seeds[i].key), AES_KEY_SZ_256 | AES_KEY_TYPE_UID0) != KERN_SUCCESS) {
 			return EXIT_FAILURE;
 		}
-		printf("key_id: 0x%" PRIX32 ", val: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", uid_key_seeds[i].key_id, uid_key_seeds[i].val[0], uid_key_seeds[i].val[1], uid_key_seeds[i].val[2], uid_key_seeds[i].val[3]);
+		printf("key_id: 0x%" PRIX32 ", val: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", uid_key_seeds[i].key_id, __builtin_bswap32(uid_key_seeds[i].val[0]), __builtin_bswap32(uid_key_seeds[i].val[1]), __builtin_bswap32(uid_key_seeds[i].val[2]), __builtin_bswap32(uid_key_seeds[i].val[3]));
 	}
 	return 0;
 }

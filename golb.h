@@ -16,11 +16,11 @@
 #	define GOLB_H
 #	include "common.h"
 typedef struct {
-	kaddr_t virt;
-	size_t page_cnt;
 	struct {
 		kaddr_t ptep, pte;
 	} *pages;
+	size_t page_cnt;
+	kaddr_t virt;
 } golb_ctx_t;
 typedef kern_return_t (*kread_func_t)(kaddr_t, void *, size_t), (*kwrite_func_t)(kaddr_t, const void *, size_t);
 
