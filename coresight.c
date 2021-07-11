@@ -42,13 +42,13 @@
 #define DBGWRAP_DBGHALT_ON_RST (1U << 29U)
 
 typedef struct {
-	kaddr_t ed_base_off, utt_dbgwrap_base_off;
+	size_t ed_base_off, utt_dbgwrap_base_off;
 	golb_ctx_t ed_ctx, utt_dbgwrap_ctx;
 } cpu_t;
 
 static size_t cpu_cnt;
 static cpu_t cpus[MAX_CPUS];
-static bool has_64bit_dbgwrap;
+static bool has_32bit_dbgwrap;
 
 static kern_return_t
 init_arm_globals(void) {
@@ -61,6 +61,7 @@ init_arm_globals(void) {
 			case 0x37A09642U: /* CPUFAMILY_ARM_CYCLONE */
 			case 0x2C91A47EU: /* CPUFAMILY_ARM_TYPHOON */
 			case 0x92FB37C8U: /* CPUFAMILY_ARM_TWISTER */
+				has_32bit_dbgwrap = true;
 				cpus[cpu_cnt].ed_base_off = 0x2010000;
 				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2040000;
 				cpus[cpu_cnt].ed_base_off = 0x2110000;
@@ -71,7 +72,6 @@ init_arm_globals(void) {
 				}
 				return KERN_SUCCESS;
 			case 0x67CEEE93U: /* CPUFAMILY_ARM_HURRICANE */
-				has_64bit_dbgwrap = true;
 				cpus[cpu_cnt].ed_base_off = 0x2010000;
 				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2040000;
 				cpus[cpu_cnt].ed_base_off = 0x2110000;
@@ -82,7 +82,6 @@ init_arm_globals(void) {
 				}
 				return KERN_SUCCESS;
 			case 0xE81E7EF6U: /* CPUFAMILY_ARM_MONSOON_MISTRAL */
-				has_64bit_dbgwrap = true;
 				cpus[cpu_cnt].ed_base_off = 0x8010000;
 				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x8040000;
 				cpus[cpu_cnt].ed_base_off = 0x8110000;
@@ -99,7 +98,6 @@ init_arm_globals(void) {
 			case 0x07D34B9FU: /* CPUFAMILY_ARM_VORTEX_TEMPEST */
 			case 0x462504D2U: /* CPUFAMILY_ARM_LIGHTNING_THUNDER */
 			case 0x1B588BB3U: /* CPUFAMILY_ARM_FIRESTORM_ICESTORM */
-				has_64bit_dbgwrap = true;
 				cpus[cpu_cnt].ed_base_off = 0x10010000;
 				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x10040000;
 				cpus[cpu_cnt].ed_base_off = 0x10110000;
@@ -136,7 +134,7 @@ coresight_init(void) {
 	size_t i;
 
 	for(i = 0; i < cpu_cnt; ++i) {
-		if((ret = golb_map(&cpus[i].ed_ctx, IO_BASE + cpus[i].ed_base_off, CORESIGHT_SZ, VM_PROT_READ | VM_PROT_WRITE)) == KERN_SUCCESS && (ret = golb_map(&cpus[i].utt_dbgwrap_ctx, IO_BASE + cpus[i].utt_dbgwrap_base_off, has_64bit_dbgwrap ? sizeof(uint64_t) : sizeof(uint32_t), VM_PROT_READ | VM_PROT_WRITE)) != KERN_SUCCESS) {
+		if((ret = golb_map(&cpus[i].ed_ctx, IO_BASE + cpus[i].ed_base_off, CORESIGHT_SZ, VM_PROT_READ | VM_PROT_WRITE)) == KERN_SUCCESS && (ret = golb_map(&cpus[i].utt_dbgwrap_ctx, IO_BASE + cpus[i].utt_dbgwrap_base_off, has_32bit_dbgwrap ? sizeof(uint32_t) : sizeof(uint64_t), VM_PROT_READ | VM_PROT_WRITE)) != KERN_SUCCESS) {
 			golb_unmap(cpus[i].ed_ctx);
 		}
 		if(ret != KERN_SUCCESS) {
@@ -177,7 +175,7 @@ coresight_exec_insn(size_t cpunum, uint32_t insn) {
 
 static bool
 coresight_read_reg_32(size_t cpunum, uint64_t reg, uint32_t *val) {
-	if(coresight_exec_insn(cpunum, 0xD5130400U | (reg & 0x1FU))) { /* msr DBGDTR_EL0, reg */
+	if(coresight_exec_insn(cpunum, 0xD5130400U | (reg & 0x1FU)) /* msr DBGDTR_EL0, reg */) {
 		*val = *(volatile uint32_t *)(cpus[cpunum].ed_ctx.virt + DBGDTRTX_REG_OFF);
 		return true;
 	}
@@ -186,7 +184,7 @@ coresight_read_reg_32(size_t cpunum, uint64_t reg, uint32_t *val) {
 
 static bool
 coresight_read_reg_64(size_t cpunum, uint64_t reg, kaddr_t *val) {
-	if(coresight_exec_insn(cpunum, 0xD5130400U | (reg & 0x1FU))) { /* msr DBGDTR_EL0, reg */
+	if(coresight_exec_insn(cpunum, 0xD5130400U | (reg & 0x1FU)) /* msr DBGDTR_EL0, reg */) {
 		*val = ((kaddr_t)*(volatile uint32_t *)(cpus[cpunum].ed_ctx.virt + DBGDTRRX_REG_OFF) << 32U) | *(volatile uint32_t *)(cpus[cpunum].ed_ctx.virt + DBGDTRTX_REG_OFF);
 		return true;
 	}
@@ -197,7 +195,7 @@ static bool
 coresight_write_reg(size_t cpunum, uint64_t reg, kaddr_t val) {
 	*(volatile uint32_t *)(cpus[cpunum].ed_ctx.virt + DBGDTRTX_REG_OFF) = (uint32_t)(val >> 32U);
 	*(volatile uint32_t *)(cpus[cpunum].ed_ctx.virt + DBGDTRRX_REG_OFF) = (uint32_t)val;
-	return coresight_exec_insn(cpunum, 0xD5330400U | (reg & 0x1FU)); /* mrs reg, DBGDTR_EL0 */
+	return coresight_exec_insn(cpunum, 0xD5330400U | (reg & 0x1FU)) /* mrs reg, DBGDTR_EL0 */;
 }
 
 static bool
@@ -216,10 +214,10 @@ coresight_read_32(size_t cpunum, kaddr_t addr, uint32_t *val) {
 
 static void
 coresight_step(size_t cpunum) {
-	if(has_64bit_dbgwrap) {
-		*(volatile uint64_t *)cpus[cpunum].utt_dbgwrap_ctx.virt = DBGWRAP_DBGRESTART;
-	} else {
+	if(has_32bit_dbgwrap) {
 		*(volatile uint32_t *)cpus[cpunum].utt_dbgwrap_ctx.virt = DBGWRAP_DBGRESTART;
+	} else {
+		*(volatile uint64_t *)cpus[cpunum].utt_dbgwrap_ctx.virt = DBGWRAP_DBGRESTART;
 	}
 	while((*(volatile uint32_t *)(cpus[cpunum].ed_ctx.virt + EDPRSR_REG_OFF) & EDPRSR_SDR) == 0) {}
 	while((*(volatile uint32_t *)(cpus[cpunum].ed_ctx.virt + EDPRSR_REG_OFF) & EDPRSR_HALTED) == 0) {}
@@ -236,10 +234,10 @@ coresight_test(void) {
 		ret = EXIT_FAILURE;
 		while(i == get_cpunum()) {}
 		*(volatile uint32_t *)(cpus[i].ed_ctx.virt + EDLAR_REG_OFF) = EDLAR_KEY;
-		if(has_64bit_dbgwrap) {
-			*(volatile uint64_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGHALT_ON_RST;
-		} else {
+		if(has_32bit_dbgwrap) {
 			*(volatile uint32_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGHALT_ON_RST;
+		} else {
+			*(volatile uint64_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGHALT_ON_RST;
 		}
 		while((*(volatile uint32_t *)(cpus[i].ed_ctx.virt + EDPRSR_REG_OFF) & EDPRSR_HALTED) == 0) {}
 		*(volatile uint32_t *)(cpus[i].ed_ctx.virt + OSLAR_REG_OFF) = 0;
@@ -250,19 +248,24 @@ coresight_test(void) {
 				break;
 			}
 			printf("insn: 0x%" PRIX32 "\n", insn);
-			if((insn & ~0x1FU) == 0xD51CF240U /* msr S3_4_c15_c2_2, reg */ && coresight_read_reg_64(i, insn & 0x1FU, &val) && val == 1) {
-				if(coresight_write_reg(i, insn & 0x1FU, 0)) {
-					ret = 0;
+			if((insn & ~0x1FU) == 0xD51CF240U /* msr S3_4_c15_c2_2, reg */) {
+				if(!coresight_read_reg_64(i, insn & 0x1FU, &val)) {
+					break;
 				}
-				break;
+				if(val == 1) {
+					if(coresight_write_reg(i, insn & 0x1FU, 0)) {
+						ret = 0;
+					}
+					break;
+				}
 			}
 			coresight_step(i);
 		}
 		*(volatile uint32_t *)(cpus[i].ed_ctx.virt + EDECR_REG_OFF) = 0;
-		if(has_64bit_dbgwrap) {
-			*(volatile uint64_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGRESTART | DBGWRAP_DIS_RST;
-		} else {
+		if(has_32bit_dbgwrap) {
 			*(volatile uint32_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGRESTART | DBGWRAP_DIS_RST;
+		} else {
+			*(volatile uint64_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGRESTART | DBGWRAP_DIS_RST;
 		}
 	} while(ret == 0 && ++i < cpu_cnt);
 	return ret;
@@ -275,7 +278,7 @@ main(void) {
 
 	if(init_arm_globals() == KERN_SUCCESS) {
 		for(i = 0; i < cpu_cnt; ++i) {
-			printf("cpus[%zu].ed_base_off: " KADDR_FMT ", cpus[%zu].utt_dbgwrap_base_off: " KADDR_FMT "\n", i, cpus[i].ed_base_off, i, cpus[i].utt_dbgwrap_base_off);
+			printf("cpus[%zu] = { .ed_base_off: 0x%zx, .utt_dbgwrap_base_off: 0x%zx }\n", i, cpus[i].ed_base_off, cpus[i].utt_dbgwrap_base_off);
 		}
 		if(golb_init(0, NULL, NULL) == KERN_SUCCESS) {
 			if(coresight_init() == KERN_SUCCESS) {

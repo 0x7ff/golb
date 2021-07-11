@@ -82,12 +82,9 @@
 #define CMD_DATA_UPPER_ADDR_DST_MASK (0xFFU)
 #define CMD_DATA_UPPER_ADDR_SRC_MASK (0xFFU)
 #define AES_BLK_INT_STATUS_FLAG_CMD_UMASK (32U)
-#define AES_AP_BASE_ADDR (IO_BASE + aes_ap_base_off)
-#define PMGR_AES0_PS_BASE_ADDR (IO_BASE + pmgr_aes0_ps_off)
 #define rAES_CTRL (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x8))
-#define PMGR_SECURITY_BASE_ADDR (IO_BASE + pmgr_security_base_off)
 #define rAES_AP_DIS (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x4))
-#define rPMGR_AES0_PS (*(volatile uint32_t *)(pmgr_aes0_ps_ctx.virt))
+#define rPMGR_AES0_PS (*(volatile uint32_t *)pmgr_aes0_ps_ctx.virt)
 #define rPMGR_SECURITY (*(volatile uint32_t *)pmgr_security_ctx.virt)
 #define rAES_AP_IV_IN0 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x100))
 #define rAES_AP_IV_IN1 (*(volatile uint32_t *)(aes_ap_ctx.virt + 0x104))
@@ -210,9 +207,9 @@ aes_ap_term(void) {
 
 static kern_return_t
 aes_ap_init(void) {
-	if(golb_map(&aes_ap_ctx, AES_AP_BASE_ADDR, AES_AP_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-		if(golb_map(&pmgr_aes0_ps_ctx, PMGR_AES0_PS_BASE_ADDR, sizeof(rPMGR_AES0_PS), VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-			if(!aes_ap_v2 || golb_map(&pmgr_security_ctx, PMGR_SECURITY_BASE_ADDR, sizeof(rPMGR_SECURITY), VM_PROT_READ) == KERN_SUCCESS) {
+	if(golb_map(&aes_ap_ctx, IO_BASE + aes_ap_base_off, AES_AP_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
+		if(golb_map(&pmgr_aes0_ps_ctx, IO_BASE + pmgr_aes0_ps_off, sizeof(rPMGR_AES0_PS), VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
+			if(!aes_ap_v2 || golb_map(&pmgr_security_ctx, IO_BASE + pmgr_security_base_off, sizeof(rPMGR_SECURITY), VM_PROT_READ) == KERN_SUCCESS) {
 				return KERN_SUCCESS;
 			}
 			golb_unmap(pmgr_aes0_ps_ctx);
@@ -280,9 +277,9 @@ aes_ap_v1_cmd(uint32_t cmd, const void *src, void *dst, size_t len, uint32_t opt
 	rPMGR_AES0_PS |= PMGR_PS_RUN_MAX;
 	while((rPMGR_AES0_PS & PMGR_PS_MANUAL_PS_MASK) != ((rPMGR_AES0_PS >> PMGR_PS_ACTUAL_PS_SHIFT) & PMGR_PS_ACTUAL_PS_MASK)) {}
 	if((~rAES_AP_DIS & key_type) != 0) {
-		printf("old_iv: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", rAES_AP_IV_IN0, rAES_AP_IV_IN1, rAES_AP_IV_IN2, rAES_AP_IV_IN3);
-		printf("old_in: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", rAES_AP_TXT_IN0, rAES_AP_TXT_IN1, rAES_AP_TXT_IN2, rAES_AP_TXT_IN3);
-		printf("old_out: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", rAES_AP_TXT_OUT0, rAES_AP_TXT_OUT1, rAES_AP_TXT_OUT2, rAES_AP_TXT_OUT3);
+		printf("old_iv: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", __builtin_bswap32(rAES_AP_IV_IN0), __builtin_bswap32(rAES_AP_IV_IN1), __builtin_bswap32(rAES_AP_IV_IN2), __builtin_bswap32(rAES_AP_IV_IN3));
+		printf("old_in: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", __builtin_bswap32(rAES_AP_TXT_IN0), __builtin_bswap32(rAES_AP_TXT_IN1), __builtin_bswap32(rAES_AP_TXT_IN2), __builtin_bswap32(rAES_AP_TXT_IN3));
+		printf("old_out: 0x%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "%08" PRIX32 "\n", __builtin_bswap32(rAES_AP_TXT_OUT0), __builtin_bswap32(rAES_AP_TXT_OUT1), __builtin_bswap32(rAES_AP_TXT_OUT2), __builtin_bswap32(rAES_AP_TXT_OUT3));
 		rAES_AP_KEY_IN_CTRL = key_in_ctrl | KEY_IN_CTRL_VAL_SET;
 		rAES_AP_IV_IN0 = 0;
 		rAES_AP_IV_IN1 = 0;
