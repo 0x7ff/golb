@@ -108,7 +108,7 @@
 
 static bool aes_ap_v2;
 static golb_ctx_t aes_ap_ctx, pmgr_aes0_ps_ctx, pmgr_security_ctx;
-static size_t aes_ap_base_off, pmgr_security_base_off, pmgr_aes0_ps_off, aes_cmd_fifo_off = 0x200;
+static size_t aes_ap_base_off, pmgr_security_off, pmgr_aes0_ps_off, aes_cmd_fifo_off = 0x200;
 
 static struct {
 	uint32_t key_id, key[4], val[4];
@@ -149,7 +149,7 @@ init_arm_globals(void) {
 				if(strstr(uts.machine, "iBridge2,") != NULL) {
 					aes_ap_base_off = 0xA008000;
 					pmgr_aes0_ps_off = 0xE080238;
-					pmgr_security_base_off = 0x112D0000;
+					pmgr_security_off = 0x112D0000;
 				} else {
 					aes_ap_base_off = 0xA108000;
 					if(strstr(uts.version, "T8011") != NULL) {
@@ -162,32 +162,32 @@ init_arm_globals(void) {
 						aes_cmd_fifo_off = 0x100;
 						pmgr_aes0_ps_off = 0xE080220;
 					}
-					pmgr_security_base_off = 0x102D0000;
+					pmgr_security_off = 0x102D0000;
 				}
 				return KERN_SUCCESS;
 			case 0xE81E7EF6U: /* CPUFAMILY_ARM_MONSOON_MISTRAL */
 				aes_ap_v2 = true;
 				aes_ap_base_off = 0x2E008000;
 				pmgr_aes0_ps_off = 0x32080240;
-				pmgr_security_base_off = 0x352D0000;
+				pmgr_security_off = 0x352D0000;
 				return KERN_SUCCESS;
 			case 0x07D34B9FU: /* CPUFAMILY_ARM_VORTEX_TEMPEST */
 				aes_ap_v2 = true;
 				aes_ap_base_off = 0x35008000;
 				pmgr_aes0_ps_off = 0x3B080228;
-				pmgr_security_base_off = 0x3D2D0000;
+				pmgr_security_off = 0x3D2D0000;
 				return KERN_SUCCESS;
 			case 0x462504D2U: /* CPUFAMILY_ARM_LIGHTNING_THUNDER */
 				aes_ap_v2 = true;
 				aes_ap_base_off = 0x35008000;
 				pmgr_aes0_ps_off = 0x3B0801D8;
-				pmgr_security_base_off = 0x3D2D0000;
+				pmgr_security_off = 0x3D2D0000;
 				return KERN_SUCCESS;
 			case 0x1B588BB3U: /* CPUFAMILY_ARM_FIRESTORM_ICESTORM */
 				aes_ap_v2 = true;
 				aes_ap_base_off = 0x3500C000;
 				pmgr_aes0_ps_off = 0x3B700238;
-				pmgr_security_base_off = 0x3D2D0000;
+				pmgr_security_off = 0x3D2D0000;
 				return KERN_SUCCESS;
 			default:
 				break;
@@ -209,7 +209,7 @@ static kern_return_t
 aes_ap_init(void) {
 	if(golb_map(&aes_ap_ctx, IO_BASE + aes_ap_base_off, AES_AP_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
 		if(golb_map(&pmgr_aes0_ps_ctx, IO_BASE + pmgr_aes0_ps_off, sizeof(rPMGR_AES0_PS), VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-			if(!aes_ap_v2 || golb_map(&pmgr_security_ctx, IO_BASE + pmgr_security_base_off, sizeof(rPMGR_SECURITY), VM_PROT_READ) == KERN_SUCCESS) {
+			if(!aes_ap_v2 || golb_map(&pmgr_security_ctx, IO_BASE + pmgr_security_off, sizeof(rPMGR_SECURITY), VM_PROT_READ) == KERN_SUCCESS) {
 				return KERN_SUCCESS;
 			}
 			golb_unmap(pmgr_aes0_ps_ctx);
@@ -496,7 +496,7 @@ main(int argc, char **argv) {
 	if(argc != 1 && argc != 6) {
 		printf("Usage: %s [enc/dec UID0/GID0/GID1 in_file out_file buf_sz]\n", argv[0]);
 	} else if(init_arm_globals() == KERN_SUCCESS) {
-		printf("aes_ap_base_off: 0x%zx, pmgr_aes0_ps_off: 0x%zx\n", aes_ap_base_off, pmgr_aes0_ps_off);
+		printf("aes_ap_base_off: 0x%zx, pmgr_security_off: 0x%zx, pmgr_aes0_ps_off: 0x%zx\n", aes_ap_base_off, pmgr_security_off, pmgr_aes0_ps_off);
 		if(golb_init(0, NULL, NULL) == KERN_SUCCESS) {
 			if(aes_ap_init() == KERN_SUCCESS) {
 				if(argc == 1) {

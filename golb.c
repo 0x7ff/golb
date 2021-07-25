@@ -1182,7 +1182,7 @@ golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
 								break;
 							}
 							printf("vphys: " KADDR_FMT "\n", vphys);
-							if(vphys < boot_args.phys_base || vphys >= trunc_page_kernel(boot_args.phys_base + boot_args.mem_sz) || kread_addr(pv_head_table + ((vphys - boot_args.phys_base) >> vm_kernel_page_shift) * sizeof(kaddr_t), &pv_h) != KERN_SUCCESS) {
+							if(vphys < boot_args.phys_base || vphys >= trunc_page_kernel(boot_args.phys_base + boot_args.mem_sz) || kread_addr(pv_head_table + ((vphys - boot_args.phys_base) >> vm_kernel_page_shift) * sizeof(pv_h), &pv_h) != KERN_SUCCESS) {
 								break;
 							}
 							printf("pv_h: " KADDR_FMT "\n", pv_h);
