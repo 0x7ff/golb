@@ -278,7 +278,7 @@ main(void) {
 
 	if(init_arm_globals() == KERN_SUCCESS) {
 		for(i = 0; i < cpu_cnt; ++i) {
-			printf("cpus[%zu] = { .ed_base_off: 0x%zx, .utt_dbgwrap_base_off: 0x%zx }\n", i, cpus[i].ed_base_off, cpus[i].utt_dbgwrap_base_off);
+			printf("cpus[%zu] = { .ed_base_off: 0x%zX, .utt_dbgwrap_base_off: 0x%zX }\n", i, cpus[i].ed_base_off, cpus[i].utt_dbgwrap_base_off);
 		}
 		if(golb_init(0, NULL, NULL) == KERN_SUCCESS) {
 			if(coresight_init() == KERN_SUCCESS) {

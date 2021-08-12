@@ -17,6 +17,7 @@
 #include <sys/sysctl.h>
 #include <sys/utsname.h>
 
+#define AES_AP_SZ (0x1000)
 #define IO_BASE (0x200000000ULL)
 
 #define OP_IV (2U)
@@ -38,7 +39,6 @@
 #define KEY_SELECT_UID1 (1U)
 #define PMGR_PS_RUN_MAX (15U)
 #define AES_CMD_DIR_MASK (15U)
-#define AES_AP_SZ (vm_page_size)
 #define KEY_SELECT_GID_AP_1 (2U)
 #define KEY_SELECT_GID_AP_2 (3U)
 #define TXT_IN_STS_RDY (1U << 0U)
@@ -496,7 +496,7 @@ main(int argc, char **argv) {
 	if(argc != 1 && argc != 6) {
 		printf("Usage: %s [enc/dec UID0/GID0/GID1 in_file out_file buf_sz]\n", argv[0]);
 	} else if(init_arm_globals() == KERN_SUCCESS) {
-		printf("aes_ap_base_off: 0x%zx, pmgr_security_off: 0x%zx, pmgr_aes0_ps_off: 0x%zx\n", aes_ap_base_off, pmgr_security_off, pmgr_aes0_ps_off);
+		printf("aes_ap_base_off: 0x%zX, pmgr_security_off: 0x%zX, pmgr_aes0_ps_off: 0x%zX\n", aes_ap_base_off, pmgr_security_off, pmgr_aes0_ps_off);
 		if(golb_init(0, NULL, NULL) == KERN_SUCCESS) {
 			if(aes_ap_init() == KERN_SUCCESS) {
 				if(argc == 1) {

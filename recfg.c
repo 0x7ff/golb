@@ -370,6 +370,7 @@ recfg(void) {
 					for(end = false, chunk_sz = vm_page_size; !end && golb_map(&aop_stage_ctx, aop_table_entry, chunk_sz, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS; ) {
 						if((ret = recfg_check((const void *)aop_stage_ctx.virt, chunk_sz)) == RECFG_ENOMEM) {
 							chunk_sz *= 2;
+							ret = EXIT_FAILURE;
 						} else {
 							if(ret != RECFG_SUCCESS || recfg_walk((void *)aop_stage_ctx.virt, chunk_sz, cbs, NULL) == RECFG_SUCCESS) {
 								ret = 0;
@@ -394,7 +395,7 @@ main(void) {
 	int ret = EXIT_FAILURE;
 
 	if(init_arm_globals() == KERN_SUCCESS) {
-		printf("aop_cfg_table_off: 0x%zx, aop_sram_base_off: 0x%zx, aop_recfg_base_off: 0x%zx\n", aop_cfg_table_off, aop_sram_base_off, aop_recfg_base_off);
+		printf("aop_cfg_table_off: 0x%zX, aop_sram_base_off: 0x%zX, aop_recfg_base_off: 0x%zX\n", aop_cfg_table_off, aop_sram_base_off, aop_recfg_base_off);
 		if(golb_init(0, NULL, NULL) == KERN_SUCCESS) {
 			ret = recfg();
 			golb_term();
