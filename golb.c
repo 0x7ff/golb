@@ -1162,7 +1162,7 @@ golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
 			printf("flags: 0x%" PRIX32 "\n", flags);
 			flags |= VM_MAP_FLAGS_NO_ZERO_FILL;
 			if(kwrite_buf(our_map + vm_map_flags_off, &flags, sizeof(flags)) == KERN_SUCCESS) {
-				for(map_off = 0; map_off < sz; map_off += vm_page_size) {
+				for(map_off = 0; map_off < sz; map_off += vm_kernel_page_size) {
 					*(volatile kaddr_t *)(ctx->virt + map_off) = FAULT_MAGIC;
 				}
 				flags &= ~VM_MAP_FLAGS_NO_ZERO_FILL;

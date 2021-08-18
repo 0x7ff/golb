@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 #include "golb.h"
+#include <mach/mach_time.h>
 #include <sys/sysctl.h>
 #include <sys/utsname.h>
 
@@ -20,11 +21,11 @@
 #define AMCX_SZ (0x1000)
 #define ROWHAMMER_ROUNDS (3)
 #define IO_BASE (0x200000000ULL)
-#define ROWHAMMER_CNT (1U << 16U)
+#define ROWHAMMER_CNT (1U << 14U)
 #define SDRAM_BASE (0x800000000ULL)
 #define ROWHAMMER_DOZEN (1U << 10U)
 
-static bool has_amcx;
+static bool amc_v2, has_amcx;
 static golb_ctx_t amcc_ctx, amcx_ctx;
 static size_t amcc_base_off, amcx_base_off, addrcfg_off, mcuchnhash0_off, mcuchnhash1_off, mcuchnhash2_off, addrmapmode_off;
 static uint32_t ch_wid, ch_point, addrcfg, addrmapmode, mcuchnhash0, mcuchnhash1, mcuchnhash2, mcsaddrbankhash0 = 0x6DB6, mcsaddrbankhash1 = 0x5B6D, mcsaddrbankhash2 = 0x36DB;
@@ -42,13 +43,19 @@ init_arm_globals(void) {
 
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0 && uname(&uts) == 0) {
 		switch(cpufamily) {
+			case 0x37A09642U: /* CPUFAMILY_ARM_CYCLONE */
+				ch_wid = 1;
+				addrcfg_off = 0x404;
+				mcuchnhash0_off = 0x810;
+				addrmapmode_off = 0x400;
+				return KERN_SUCCESS;
 			case 0x2C91A47EU: /* CPUFAMILY_ARM_TYPHOON */
+				has_amcx = amc_v2 = true;
 				if(strstr(uts.version, "T7001") != NULL) {
 					ch_wid = 2;
 				} else {
 					ch_wid = 1;
 				}
-				has_amcx = true;
 				amcx_base_off = 0x100000;
 				addrcfg_off = 0x94;
 				mcuchnhash0_off = 0x4A8;
@@ -58,6 +65,7 @@ init_arm_globals(void) {
 			case 0x92FB37C8U: /* CPUFAMILY_ARM_TWISTER */
 			case 0x67CEEE93U: /* CPUFAMILY_ARM_HURRICANE */
 			case 0xE81E7EF6U: /* CPUFAMILY_ARM_MONSOON_MISTRAL */
+				amc_v2 = true;
 				if(strstr(uts.version, "S8001") != NULL) {
 					ch_wid = 3;
 					addrcfg_off = 0x4CC;
@@ -79,6 +87,7 @@ init_arm_globals(void) {
 			case 0x07D34B9FU: /* CPUFAMILY_ARM_VORTEX_TEMPEST */
 			case 0x462504D2U: /* CPUFAMILY_ARM_LIGHTNING_THUNDER */
 			case 0x1B588BB3U: /* CPUFAMILY_ARM_FIRESTORM_ICESTORM */
+				amc_v2 = true;
 				ch_wid = 2;
 				addrcfg_off = 0x1014;
 				mcuchnhash0_off = 0x1004;
@@ -117,14 +126,14 @@ rowhammer_init(void) {
 			}
 		}
 		if(!has_amcx) {
-			addrcfg = *(volatile uint32_t *)(amcc_ctx.virt + addrcfg_off);;
+			addrcfg = *(volatile uint32_t *)(amcc_ctx.virt + addrcfg_off);
 			printf("addrcfg: 0x%" PRIX32 "\n", addrcfg);
 			addrmapmode = *(volatile uint32_t *)(amcc_ctx.virt + addrmapmode_off);
 			printf("addrmapmode: 0x%" PRIX32 "\n", addrmapmode);
 			return KERN_SUCCESS;
 		}
 		if(golb_map(&amcx_ctx, IO_BASE + amcx_base_off, AMCX_SZ, VM_PROT_READ) == KERN_SUCCESS) {
-			addrcfg = *(volatile uint32_t *)(amcx_ctx.virt + addrcfg_off);;
+			addrcfg = *(volatile uint32_t *)(amcx_ctx.virt + addrcfg_off);
 			printf("addrcfg: 0x%" PRIX32 "\n", addrcfg);
 			addrmapmode = *(volatile uint32_t *)(amcx_ctx.virt + addrmapmode_off);
 			printf("addrmapmode: 0x%" PRIX32 "\n", addrmapmode);
@@ -148,18 +157,56 @@ static kaddr_t
 dram2phys(uint32_t ch, uint32_t rank, uint32_t bank, uint32_t row, uint32_t col) {
 	uint32_t rank_wid = extract32(addrcfg, 24, 2), bank_wid = 2 + extract32(addrcfg, 0, 4), row_wid = 12 + extract32(addrcfg, 16, 4), col_wid = 8 + extract32(addrcfg, 8, 4), col_off = 2, row_off, bank_off, rank_off, addr, mask, chnhash;
 
-	if(extract32(addrmapmode, 0, 1) == 0) {
-		row_off = col_off + col_wid;
-		bank_off = row_off + row_wid;
-		rank_off = bank_off + bank_wid;
-	} else if((bank_off = 6 + extract32(addrmapmode, 8, 5)) == col_off + col_wid) {
-		rank_off = bank_off + bank_wid;
-		row_off = rank_off + rank_wid;
+	if(amc_v2) {
+		if(extract32(addrmapmode, 0, 1) == 0) {
+			row_off = col_off + col_wid;
+			bank_off = row_off + row_wid;
+			rank_off = bank_off + bank_wid;
+		} else if((bank_off = 6 + extract32(addrmapmode, 8, 5)) == col_off + col_wid) {
+			rank_off = bank_off + bank_wid;
+			row_off = rank_off + rank_wid;
+		} else {
+			mask = (1U << (bank_off - col_off)) - 1U;
+			col = ((col & ~mask) << bank_wid) | (col & mask);
+			rank_off = col_off + col_wid + bank_wid;
+			row_off = rank_off + rank_wid;
+		}
 	} else {
-		mask = (1U << (bank_off - col_off)) - 1U;
-		col = ((col & ~mask) << bank_wid) | (col & mask);
-		rank_off = col_off + col_wid + bank_wid;
-		row_off = rank_off + rank_wid;
+		switch(addrmapmode) {
+			case 0:
+				row_off = col_off + col_wid;
+				bank_off = row_off + row_wid;
+				rank_off = bank_off + bank_wid;
+				break;
+			case 1:
+				mask = (1U << 5U) - 1U;
+				col = ((col & ~mask) << (bank_wid + rank_wid)) | (col & mask);
+				bank_off = col_off + 5;
+				rank_off = bank_off + bank_wid;
+				row_off = col_off + col_wid + bank_wid + rank_wid;
+				break;
+			case 2:
+				bank_off = col_off + col_wid;
+				rank_off = bank_off + bank_wid;
+				row_off = rank_off + rank_wid;
+				break;
+			case 3:
+				mask = (1U << 5U) - 1U;
+				col = ((col & ~mask) << bank_wid) | (col & mask);
+				bank_off = col_off + 5;
+				row_off = col_off + col_wid + bank_wid;
+				rank_off = row_off + row_wid;
+				break;
+			case 4:
+				mask = (1U << 5U) - 1U;
+				col = ((col & ~mask) << bank_wid) | (col & mask);
+				bank_off = col_off + 5;
+				rank_off = col_off + col_wid + bank_wid;
+				row_off = rank_off + rank_wid;
+				break;
+			default:
+				return 0;
+		}
 	}
 	bank ^= (odd_parity(row & ~mcsaddrbankhash2) << 2U) | (odd_parity(row & ~mcsaddrbankhash1) << 1U) | odd_parity(row & ~mcsaddrbankhash0);
 	addr = (rank << rank_off) | (bank << bank_off) | (row << row_off) | (col << col_off);
@@ -184,20 +231,58 @@ phys2dram(kaddr_t phys, uint32_t *ch, uint32_t *rank, uint32_t *bank, uint32_t *
 	mask = (1U << ch_point) - 1U;
 	addr = ((addr >> ch_wid) & ~mask) | (addr & mask);
 	*col = addr >> col_off;
-	if(extract32(addrmapmode, 0, 1) == 0) {
-		*row = *col >> col_wid;
-		*bank = *row >> row_wid;
-		*rank = *bank >> bank_wid;
-	} else if((bank_off = 6 + extract32(addrmapmode, 8, 5)) == col_off + col_wid) {
-		*bank = addr >> bank_off;
-		*rank = *bank >> bank_wid;
-		*row = *rank >> rank_wid;
+	if(amc_v2) {
+		if(extract32(addrmapmode, 0, 1) == 0) {
+			*row = *col >> col_wid;
+			*bank = *row >> row_wid;
+			*rank = *bank >> bank_wid;
+		} else if((bank_off = 6 + extract32(addrmapmode, 8, 5)) == col_off + col_wid) {
+			*bank = addr >> bank_off;
+			*rank = *bank >> bank_wid;
+			*row = *rank >> rank_wid;
+		} else {
+			*bank = addr >> bank_off;
+			*rank = *col >> (col_wid + bank_wid);
+			*row = *rank >> rank_wid;
+			mask = (1U << (bank_off - col_off)) - 1U;
+			*col = ((*col >> bank_wid) & ~mask) | (*col & mask);
+		}
 	} else {
-		*bank = addr >> bank_off;
-		*rank = *col >> (col_wid + bank_wid);
-		*row = *rank >> rank_wid;
-		mask = (1U << (bank_off - col_off)) - 1U;
-		*col = ((*col >> bank_wid) & ~mask) | (*col & mask);
+		switch(addrmapmode) {
+			case 0:
+				*row = *col >> col_wid;
+				*bank = *row >> row_wid;
+				*rank = *bank >> bank_wid;
+				break;
+			case 1:
+				*bank = *col >> 5U;
+				*rank = *bank >> bank_wid;
+				*row = *col >> (col_wid + bank_wid + rank_wid);
+				mask = (1U << 5U) - 1U;
+				*col = ((*col >> (bank_wid + rank_wid)) & ~mask) | (*col & mask);
+				break;
+			case 2:
+				*bank = *col >> col_wid;
+				*rank = *bank >> bank_wid;
+				*row = *rank >> rank_wid;
+				break;
+			case 3:
+				*bank = *col >> 5U;
+				*row = *col >> (col_wid + bank_wid);
+				*rank = *row >> row_wid;
+				mask = (1U << 5U) - 1U;
+				*col = ((*col >> bank_wid) & ~mask) | (*col & mask);
+				break;
+			case 4:
+				*bank = *col >> 5U;
+				*rank = *col >> (col_wid + bank_wid);
+				*row = *rank >> rank_wid;
+				mask = (1U << 5U) - 1U;
+				*col = ((*col >> bank_wid) & ~mask) | (*col & mask);
+				break;
+			default:
+				return KERN_FAILURE;
+		}
 	}
 	*rank &= (1U << rank_wid) - 1U;
 	*row &= (1U << row_wid) - 1U;
@@ -214,30 +299,30 @@ phys2dram(kaddr_t phys, uint32_t *ch, uint32_t *rank, uint32_t *bank, uint32_t *
 
 static kern_return_t
 rowhammer(kaddr_t target_phys) {
-	uint32_t row_0, row_1, row_2, target_ch, target_rank, target_bank, target_row, target_col;
-	uint8_t t0, t1, *target = malloc(vm_page_size);
-	golb_ctx_t ctx_0, ctx_1, ctx_2, target_ctx;
-	kaddr_t phys_0, phys_1, phys_2;
+	uint32_t row_0, row_1, target_ch, target_rank, target_bank, target_row, target_col;
+	golb_ctx_t ctx_0, ctx_1, target_ctx;
+	mach_timebase_info_data_t info;
+	uint8_t t0, t1, *target;
+	kaddr_t phys_0, phys_1;
 	bool flipped = false;
-	size_t i, j, k;
+	uint64_t start, end;
+	size_t i, j;
 
-	if(target != NULL) {
+	if(mach_timebase_info(&info) == KERN_SUCCESS && (target = malloc(vm_page_size)) != NULL) {
 		if(golb_map(&target_ctx, target_phys, vm_page_size, VM_PROT_READ) == KERN_SUCCESS) {
 			for(i = 0; i < vm_page_size; ++i) {
 				target[i] = ((const volatile uint8_t *)target_ctx.virt)[i];
 			}
-			__asm__ volatile("dmb ish" ::: "memory");
+			__asm__ volatile("dsb ish" ::: "memory");
 			__builtin_prefetch(target);
 			if(phys2dram(target_phys, &target_ch, &target_rank, &target_bank, &target_row, &target_col) == KERN_SUCCESS) {
 				printf("target_ch: 0x%" PRIX32 ", target_rank: 0x%" PRIX32 ", target_bank: 0x%" PRIX32 ", target_row: 0x%" PRIX32 ", target_col: 0x%" PRIX32 "\n", target_ch, target_rank, target_bank, target_row, target_col);
-				if(target_row >= 3) {
+				if(target_row >= 2) {
 					row_0 = target_row - 1;
 					row_1 = target_row - 2;
-					row_2 = target_row - 3;
 				} else {
 					row_0 = target_row + 1;
 					row_1 = target_row + 2;
-					row_2 = target_row + 3;
 				}
 				if((phys_0 = dram2phys(target_ch, target_rank, target_bank, row_0, target_col)) != 0) {
 					printf("phys_0: " KADDR_FMT "\n", phys_0);
@@ -245,27 +330,23 @@ rowhammer(kaddr_t target_phys) {
 						if((phys_1 = dram2phys(target_ch, target_rank, target_bank, row_1, target_col)) != 0) {
 							printf("phys_1: " KADDR_FMT "\n", phys_1);
 							if(golb_map(&ctx_1, phys_1, 1, VM_PROT_READ) == KERN_SUCCESS) {
-								if((phys_2 = dram2phys(target_ch, target_rank, target_bank, row_2, target_col)) != 0) {
-									printf("phys_2: " KADDR_FMT "\n", phys_2);
-									if(golb_map(&ctx_2, phys_2, 1, VM_PROT_READ) == KERN_SUCCESS) {
-										for(i = 0; !flipped && i < ROWHAMMER_ROUNDS; ++i) {
-											for(j = 0; j < ROWHAMMER_CNT; ++j) {
-												for(k = 0; k < ROWHAMMER_DOZEN; ++k) {
-													*(const volatile uint8_t *)ctx_0.virt;
-													*(const volatile uint8_t *)ctx_2.virt;
-												}
-												*(const volatile uint8_t *)ctx_1.virt;
-											}
-											for(j = 0; j < vm_page_size; ++j) {
-												if((t0 = target[j]) != (t1 = ((const volatile uint8_t *)target_ctx.virt)[j])) {
-													printf("t0: %02" PRIX8 ", t1: %02" PRIX8 "\n", t0, t1);
-													flipped = true;
-												}
-											}
+								start = mach_absolute_time();
+								for(i = 0; !flipped && i < ROWHAMMER_ROUNDS; ++i) {
+									for(j = 0; j < ROWHAMMER_DOZEN; ++j) {
+										*(const volatile uint8_t *)ctx_0.virt;
+									}
+									for(j = 0; j < ROWHAMMER_CNT; ++j) {
+										*(const volatile uint8_t *)ctx_1.virt;
+									}
+									for(j = 0; j < vm_page_size; ++j) {
+										if((t0 = target[j]) != (t1 = ((const volatile uint8_t *)target_ctx.virt)[j])) {
+											printf("t0: %02" PRIX8 ", t1: %02" PRIX8 "\n", t0, t1);
+											flipped = true;
 										}
-										golb_unmap(ctx_2);
 									}
 								}
+								end = mach_absolute_time();
+								printf("%lf ns\n", (end - start) * (double)info.numer / (double)info.denom);
 								golb_unmap(ctx_1);
 							}
 						}
@@ -296,7 +377,7 @@ rowhammer_test(void) {
 				for(i = 0; i < vm_page_size; ++i) {
 					((volatile uint8_t *)target_virt)[i] = 0xB4;
 				}
-				__asm__ volatile("dmb ish" ::: "memory");
+				__asm__ volatile("dsb ish" ::: "memory");
 				if(rowhammer(target_phys) == KERN_SUCCESS) {
 					ret = 0;
 				}
