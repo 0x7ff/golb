@@ -15,7 +15,6 @@
 #include "golb.h"
 #include <sys/stat.h>
 #include <sys/sysctl.h>
-#include <sys/utsname.h>
 
 #define AES_AP_SZ (0x1000)
 #define IO_BASE (0x200000000ULL)
@@ -127,13 +126,29 @@ static struct {
 	{ 0x8A4, { 0xDFF7310C, 0x034D9281, 0xFA37B48C, 0xC9F76003 }, { 0 } }
 };
 
+static bool
+is_device_type(const char *device_type) {
+	io_registry_entry_t arm_io = IORegistryEntryFromPath(kIOMasterPortDefault, kIODeviceTreePlane ":/arm-io");
+	CFDataRef device_type_cf;
+	size_t device_type_len;
+	bool ret = false;
+
+	if(arm_io != IO_OBJECT_NULL) {
+		if((device_type_cf = IORegistryEntryCreateCFProperty(arm_io, CFSTR("device_type"), kCFAllocatorDefault, kNilOptions)) != NULL) {
+			ret = CFGetTypeID(device_type_cf) == CFDataGetTypeID() && (device_type_len = (size_t)CFDataGetLength(device_type_cf)) == strlen(device_type) + 1 && memcmp(device_type, CFDataGetBytePtr(device_type_cf), device_type_len) == 0;
+			CFRelease(device_type_cf);
+		}
+		IOObjectRelease(arm_io);
+	}
+	return ret;
+}
+
 static kern_return_t
 init_arm_globals(void) {
 	uint32_t cpufamily = CPUFAMILY_UNKNOWN;
 	size_t len = sizeof(cpufamily);
-	struct utsname uts;
 
-	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0 && uname(&uts) == 0) {
+	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0) {
 		switch(cpufamily) {
 			case 0x37A09642U: /* CPUFAMILY_ARM_CYCLONE */
 				aes_ap_base_off = 0xA108000;
@@ -146,17 +161,17 @@ init_arm_globals(void) {
 			case 0x92FB37C8U: /* CPUFAMILY_ARM_TWISTER */
 			case 0x67CEEE93U: /* CPUFAMILY_ARM_HURRICANE */
 				aes_ap_v2 = true;
-				if(strstr(uts.machine, "iBridge2,") != NULL) {
+				if(is_device_type("t8012-io")) {
 					aes_ap_base_off = 0xA008000;
 					pmgr_aes0_ps_off = 0xE080238;
 					pmgr_security_off = 0x112D0000;
 				} else {
 					aes_ap_base_off = 0xA108000;
-					if(strstr(uts.version, "T8011") != NULL) {
+					if(is_device_type("t8011-io")) {
 						pmgr_aes0_ps_off = 0xE080228;
-					} else if(strstr(uts.version, "T8010") != NULL) {
+					} else if(is_device_type("t8010-io")) {
 						pmgr_aes0_ps_off = 0xE080230;
-					} else if(strstr(uts.version, "S8001") != NULL) {
+					} else if(is_device_type("s8001-io")) {
 						pmgr_aes0_ps_off = 0xE080218;
 					} else {
 						aes_cmd_fifo_off = 0x100;

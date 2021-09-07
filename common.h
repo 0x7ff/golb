@@ -18,6 +18,7 @@
 #	include <mach/mach.h>
 #	define KADDR_FMT "0x%" PRIX64
 #	define IO_OBJECT_NULL ((io_object_t)0)
+#	define kIODeviceTreePlane "IODeviceTree"
 typedef uint64_t kaddr_t;
 typedef char io_string_t[512];
 typedef uint32_t IOOptionBits;

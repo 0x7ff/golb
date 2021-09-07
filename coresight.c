@@ -14,7 +14,6 @@
  */
 #include "golb.h"
 #include <sys/sysctl.h>
-#include <sys/utsname.h>
 
 #define MAX_CPUS (6)
 #define MAX_EDITR_RETRIES (16)
@@ -50,13 +49,29 @@ static size_t cpu_cnt;
 static cpu_t cpus[MAX_CPUS];
 static bool has_32bit_dbgwrap;
 
+static bool
+is_device_type(const char *device_type) {
+	io_registry_entry_t arm_io = IORegistryEntryFromPath(kIOMasterPortDefault, kIODeviceTreePlane ":/arm-io");
+	CFDataRef device_type_cf;
+	size_t device_type_len;
+	bool ret = false;
+
+	if(arm_io != IO_OBJECT_NULL) {
+		if((device_type_cf = IORegistryEntryCreateCFProperty(arm_io, CFSTR("device_type"), kCFAllocatorDefault, kNilOptions)) != NULL) {
+			ret = CFGetTypeID(device_type_cf) == CFDataGetTypeID() && (device_type_len = (size_t)CFDataGetLength(device_type_cf)) == strlen(device_type) + 1 && memcmp(device_type, CFDataGetBytePtr(device_type_cf), device_type_len) == 0;
+			CFRelease(device_type_cf);
+		}
+		IOObjectRelease(arm_io);
+	}
+	return ret;
+}
+
 static kern_return_t
 init_arm_globals(void) {
 	uint32_t cpufamily = CPUFAMILY_UNKNOWN;
 	size_t len = sizeof(cpufamily);
-	struct utsname uts;
 
-	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0 && uname(&uts) == 0) {
+	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0) {
 		switch(cpufamily) {
 			case 0x37A09642U: /* CPUFAMILY_ARM_CYCLONE */
 			case 0x2C91A47EU: /* CPUFAMILY_ARM_TYPHOON */
@@ -66,7 +81,7 @@ init_arm_globals(void) {
 				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2040000;
 				cpus[cpu_cnt].ed_base_off = 0x2110000;
 				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2140000;
-				if(strstr(uts.version, "T7001") != NULL) {
+				if(is_device_type("t7001-io")) {
 					cpus[cpu_cnt].ed_base_off = 0x2410000;
 					cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2440000;
 				}
@@ -76,7 +91,7 @@ init_arm_globals(void) {
 				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2040000;
 				cpus[cpu_cnt].ed_base_off = 0x2110000;
 				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2140000;
-				if(strstr(uts.version, "T8011") != NULL) {
+				if(is_device_type("t8011-io")) {
 					cpus[cpu_cnt].ed_base_off = 0x2210000;
 					cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2240000;
 				}
