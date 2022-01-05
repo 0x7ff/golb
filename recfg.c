@@ -1,4 +1,4 @@
-/* Copyright 2021 0x7ff
+/* Copyright 2022 0x7ff
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -120,7 +120,7 @@ memcpy_volatile(volatile void *dst, const volatile void *src, size_t n, bool che
 		((volatile uint8_t *)dst)[n] = ((const volatile uint8_t *)src)[n];
 		if(check) {
 			__asm__ volatile("dsb ish" ::: "memory");
-			if(((volatile uint8_t *)dst)[n] != ((const volatile uint8_t *)src)[n]) {
+			if(((const volatile uint8_t *)dst)[n] != ((const volatile uint8_t *)src)[n]) {
 				return false;
 			}
 		}
@@ -236,7 +236,7 @@ recfg_walk(void *buf, size_t sz, recfg_cbs_t cbs, void *arg) {
 					memcpy_volatile(&data_64, data_p + sizeof(mask_64), sizeof(data_64), false);
 					retry_cnt = extract32(cmd_b, 8, 8);
 					retry = extract32(cmd_b, 16, 1) != 0;
-					addr = (kaddr_t)extract32(cmd_a, 6, 26) << 10U | (kaddr_t)extract32(cmd_b, 0, 8) << 2U;
+					addr = ((kaddr_t)extract32(cmd_a, 6, 26) << 10U) | ((kaddr_t)extract32(cmd_b, 0, 8) << 2U);
 					if((ret = cbs.r64(arg, &addr, &mask_64, &data_64, &retry, &retry_cnt)) == RECFG_UPDATE) {
 						cmd_b = deposit32(cmd_b, 8, 8, retry_cnt);
 						cmd_b = deposit32(cmd_b, 16, 1, retry ? 1 : 0);
