@@ -26,7 +26,6 @@
 #define LZSS_F (18)
 #define LZSS_N (4096)
 #define LZSS_THRESHOLD (2)
-#define VM_MAP_PMAP_OFF (0x48)
 #define KCOMP_HDR_PAD_SZ (0x16C)
 #define PROC_P_LIST_LE_PREV_OFF (0x8)
 #define VM_MAP_HDR_RBH_ROOT_OFF (0x38)
@@ -165,7 +164,7 @@ static kwrite_func_t kwrite_buf;
 static krw_0_kread_func_t krw_0_kread;
 static unsigned t1sz_boot, arm_pgshift;
 static krw_0_kwrite_func_t krw_0_kwrite;
-static size_t task_map_off, proc_task_off, proc_p_pid_off, pmap_sw_asid_off, vm_map_flags_off;
+static size_t task_map_off, proc_task_off, proc_p_pid_off, vm_map_pmap_off, pmap_sw_asid_off, vm_map_flags_off;
 static kaddr_t kslide, pvh_high_flags, kernproc, pv_head_table_ptr, const_boot_args, lowglo_ptr, pv_head_table, our_map, our_pmap;
 
 static uint32_t
@@ -889,6 +888,7 @@ pfinder_init_offsets(void) {
 			task_map_off = 0x20;
 			proc_task_off = 0x18;
 			proc_p_pid_off = 0x10;
+			vm_map_pmap_off = 0x48;
 			pmap_sw_asid_off = 0x28;
 			vm_map_flags_off = 0x110;
 			if(CFStringCompare(cf_str, CFSTR("4903.200.199.12.3"), kCFCompareNumerically) != kCFCompareLessThan) {
@@ -914,6 +914,10 @@ pfinder_init_offsets(void) {
 										pmap_sw_asid_off = 0x96;
 										if(CFStringCompare(cf_str, CFSTR("8011.0.0.121.4"), kCFCompareNumerically) != kCFCompareLessThan) {
 											vm_map_flags_off = 0x11C;
+											if(CFStringCompare(cf_str, CFSTR("8020.100.406.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
+												vm_map_pmap_off = 0x40;
+												vm_map_flags_off = 0x94;
+											}
 										}
 									}
 								}
@@ -1074,7 +1078,7 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 							if(kread_addr(our_task + task_map_off, &our_map) == KERN_SUCCESS) {
 								kxpacd(&our_map);
 								printf("our_map: " KADDR_FMT "\n", our_map);
-								if(kread_addr(our_map + VM_MAP_PMAP_OFF, &our_pmap) == KERN_SUCCESS) {
+								if(kread_addr(our_map + vm_map_pmap_off, &our_pmap) == KERN_SUCCESS) {
 									kxpacd(&our_pmap);
 									printf("our_pmap: " KADDR_FMT "\n", our_pmap);
 									return KERN_SUCCESS;
