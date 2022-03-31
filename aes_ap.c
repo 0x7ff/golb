@@ -395,7 +395,7 @@ aes_ap_v2_cmd(uint32_t cmd, kaddr_t phys_src, kaddr_t phys_dst, size_t len, uint
 			while((rAES_INT_STATUS & AES_BLK_INT_STATUS_FLAG_CMD_UMASK) == 0) {}
 			rAES_INT_STATUS = AES_BLK_INT_STATUS_FLAG_CMD_UMASK;
 			status = rAES_INT_STATUS;
-			__asm__ volatile ("dmb ish" ::: "memory");
+			__asm__ volatile("dmb ish" ::: "memory");
 			rAES_CTRL = AES_BLK_CTRL_STOP_UMASK;
 		} while(status != 0);
 		ret = KERN_SUCCESS;
