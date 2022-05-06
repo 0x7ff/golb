@@ -16,31 +16,21 @@
 #include <mach/mach_time.h>
 #include <sys/sysctl.h>
 
-#define MAX_CPUS (6)
 #define AMP_SZ (0x1000)
 #define DCS_SZ (0x1000)
-#define WDT_SZ (0x1000)
 #define AMCC_SZ (0x4000)
 #define DCS_SPACING (0x40000)
 #define IO_BASE (0x200000000ULL)
 #define AMP_SPACING (DCS_SPACING)
-#define DBGWRAP_DBGACK (1U << 28U)
 #define SDRAM_BASE (0x800000000ULL)
-#define DBGWRAP_DBGHALT (1U << 31U)
-#define DBGWRAP_DBGRESTART (1U << 30U)
 #define rAIC_GLB_CFG (*(volatile uint32_t *)aic_glb_cfg_ctx.virt)
 
-typedef struct {
-	size_t utt_dbgwrap_base_off;
-	golb_ctx_t utt_dbgwrap_ctx;
-} cpu_t;
+extern void
+ryuzaki(volatile uint32_t *, volatile uint32_t *, volatile uint32_t, volatile uint32_t);
 
-static size_t cpu_cnt;
-static cpu_t cpus[MAX_CPUS];
-static bool has_32bit_dbgwrap;
-static golb_ctx_t amp_ctx, dcs_ctx, wdt_ctx, amcc_ctx, aic_glb_cfg_ctx;
-static uint32_t ch_wid, ch_point, addrcfg, addrmapmode, mcuchnhash0, mcuchnhash1, mcuchnhash2, mcsaddrbankhash0 = 0x6DB6, mcsaddrbankhash1 = 0x5B6D, mcsaddrbankhash2 = 0x36DB, dcs_num_channels;
-static size_t amp_base_off, dcs_base_off, wdt_base_off, amcc_base_off, aic_glb_cfg_base_off, burst_len = 0x40, addrcfg_off, wdt_ctl_off = 0x1C, amcctrl_off, carunwrlvl_off = 0xB0C, mcuchnhash0_off, mcuchnhash1_off, mcuchnhash2_off, addrmapmode_off, cawrlvlexitcmd_off = 0xB04, cawrlvlentrycmd_off = 0xB00;
+static golb_ctx_t amp_ctx, dcs_ctx, amcc_ctx, aic_glb_cfg_ctx;
+static size_t amp_base_off, dcs_base_off, amcc_base_off, aic_glb_cfg_base_off, burst_len = 0x20, addrcfg_off, mcuchnhash0_off, mcuchnhash1_off, addrmapmode_off;
+static uint32_t ch_wid, ch_point, addrcfg, addrmapmode, mcuchnhash0, mcuchnhash1, mcsaddrbankhash0 = 0x6DB6, mcsaddrbankhash1 = 0x5B6D, mcsaddrbankhash2 = 0x36DB, dcs_num_channels;
 
 static uint32_t
 extract32(uint32_t val, unsigned start, unsigned len) {
@@ -72,15 +62,11 @@ init_arm_globals(void) {
 	if(sysctlbyname("hw.cpufamily", &cpufamily, &len, NULL, 0) == 0) {
 		switch(cpufamily) {
 			case 0x92FB37C8U: /* CPUFAMILY_ARM_TWISTER */
-				has_32bit_dbgwrap = true;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2040000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2140000;
 				if(is_device_type("s8001-io")) {
 					amp_base_off = 0x420000;
 					dcs_base_off = 0x400000;
 					dcs_num_channels = 8;
 					addrcfg_off = 0x4CC;
-					mcuchnhash2_off = 0x4B0;
 					addrmapmode_off = 0x4C8;
 				} else {
 					dcs_num_channels = 4;
@@ -89,39 +75,27 @@ init_arm_globals(void) {
 					addrcfg_off = 0x4C8;
 					addrmapmode_off = 0x4C4;
 				}
-				wdt_base_off = 0x102B0000;
 				aic_glb_cfg_base_off = 0xE100010;
 				mcuchnhash0_off = 0x4A8;
 				mcuchnhash1_off = 0x4AC;
 				return KERN_SUCCESS;
 			case 0x67CEEE93U: /* CPUFAMILY_ARM_HURRICANE */
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2040000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2140000;
 				if(is_device_type("t8006-io")) {
 					dcs_num_channels = 1;
 				} else if(is_device_type("t8011-io")) {
-					cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x2240000;
 					dcs_num_channels = 8;
-					mcuchnhash2_off = 0x4B0;
 				} else {
 					dcs_num_channels = 4;
 				}
 				amp_base_off = 0x220000;
 				dcs_base_off = 0x200000;
-				wdt_base_off = 0x102B0000;
 				aic_glb_cfg_base_off = 0xE100010;
 				addrcfg_off = 0x4C8;
-				addrmapmode_off = 0x4C4;
 				mcuchnhash0_off = 0x4A8;
 				mcuchnhash1_off = 0x4AC;
+				addrmapmode_off = 0x4C4;
 				return KERN_SUCCESS;
 			case 0xE81E7EF6U: /* CPUFAMILY_ARM_MONSOON_MISTRAL */
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x8040000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x8140000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x8240000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x8340000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x8440000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x8540000;
 				if(is_device_type("t8301-io")) {
 					dcs_num_channels = 1;
 				} else {
@@ -129,31 +103,22 @@ init_arm_globals(void) {
 				}
 				amp_base_off = 0x220000;
 				dcs_base_off = 0x200000;
-				wdt_base_off = 0x352B0000;
 				aic_glb_cfg_base_off = 0x32100010;
 				addrcfg_off = 0x4C8;
-				addrmapmode_off = 0x4C4;
 				mcuchnhash0_off = 0x4A8;
 				mcuchnhash1_off = 0x4AC;
+				addrmapmode_off = 0x4C4;
 				return KERN_SUCCESS;
 			case 0x07D34B9FU: /* CPUFAMILY_ARM_VORTEX_TEMPEST */
 			case 0x462504D2U: /* CPUFAMILY_ARM_LIGHTNING_THUNDER */
 			case 0x1B588BB3U: /* CPUFAMILY_ARM_FIRESTORM_ICESTORM */
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x10040000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x10140000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x10240000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x10340000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x11040000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x11140000;
 				if(is_device_type("t8103-io")) {
 					dcs_num_channels = 8;
-					mcuchnhash2_off = 0x100C;
 				} else {
 					dcs_num_channels = 4;
 				}
 				amp_base_off = 0x20C000;
 				dcs_base_off = 0x200000;
-				wdt_base_off = 0x3D2B0000;
 				aic_glb_cfg_base_off = 0x3B100010;
 				addrcfg_off = 0x1014;
 				mcuchnhash0_off = 0x1004;
@@ -169,77 +134,42 @@ init_arm_globals(void) {
 
 static void
 ryuzaki_term(void) {
-	size_t i;
-
 	golb_unmap(amp_ctx);
 	golb_unmap(dcs_ctx);
-	golb_unmap(wdt_ctx);
 	golb_unmap(amcc_ctx);
 	golb_unmap(aic_glb_cfg_ctx);
-	for(i = 0; i < cpu_cnt; ++i) {
-		golb_unmap(cpus[i].utt_dbgwrap_ctx);
-	}
 }
 
 static kern_return_t
 ryuzaki_init(void) {
-	kern_return_t ret = KERN_FAILURE;
-	size_t i;
-
 	if(golb_map(&amp_ctx, IO_BASE + amp_base_off, dcs_num_channels * AMP_SPACING + AMP_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
 		if(golb_map(&dcs_ctx, IO_BASE + dcs_base_off, dcs_num_channels * DCS_SPACING + DCS_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-			if(golb_map(&wdt_ctx, IO_BASE + wdt_base_off, WDT_SZ, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-				if(golb_map(&amcc_ctx, IO_BASE + amcc_base_off, AMCC_SZ, VM_PROT_READ) == KERN_SUCCESS) {
-					ch_wid = (uint32_t)__builtin_ctz(dcs_num_channels);
-					printf("ch_wid: 0x%" PRIX32 "\n", ch_wid);
-					mcuchnhash0 = *(volatile uint32_t *)(amcc_ctx.virt + mcuchnhash0_off);
-					printf("mcuchnhash0: 0x%" PRIX32 "\n", mcuchnhash0);
-					ch_point = 6 + (uint32_t)__builtin_ctz(mcuchnhash0);
-					printf("ch_point: 0x%" PRIX32 "\n", ch_point);
-					if(ch_wid >= 2) {
-						mcuchnhash1 = *(volatile uint32_t *)(amcc_ctx.virt + mcuchnhash1_off);
-						printf("mcuchnhash1: 0x%" PRIX32 "\n", mcuchnhash1);
-						if(ch_wid == 3) {
-							mcuchnhash2 = *(volatile uint32_t *)(amcc_ctx.virt + mcuchnhash2_off);
-							printf("mcuchnhash2: 0x%" PRIX32 "\n", mcuchnhash2);
-						}
-					}
-					addrcfg = *(volatile uint32_t *)(amcc_ctx.virt + addrcfg_off);
-					printf("addrcfg: 0x%" PRIX32 "\n", addrcfg);
-					addrmapmode = *(volatile uint32_t *)(amcc_ctx.virt + addrmapmode_off);
-					printf("addrmapmode: 0x%" PRIX32 "\n", addrmapmode);
-					if(golb_map(&aic_glb_cfg_ctx, IO_BASE + aic_glb_cfg_base_off, sizeof(rAIC_GLB_CFG), VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-						for(i = 0; i < cpu_cnt; ++i) {
-							if((ret = golb_map(&cpus[i].utt_dbgwrap_ctx, IO_BASE + cpus[i].utt_dbgwrap_base_off, has_32bit_dbgwrap ? sizeof(uint32_t) : sizeof(uint64_t), VM_PROT_READ | VM_PROT_WRITE)) != KERN_SUCCESS) {
-								while(i-- != 0) {
-									golb_unmap(cpus[i].utt_dbgwrap_ctx);
-								}
-								break;
-							}
-						}
-						if(ret != KERN_SUCCESS) {
-							golb_unmap(aic_glb_cfg_ctx);
-						}
-					}
-					if(ret != KERN_SUCCESS) {
-						golb_unmap(amcc_ctx);
-					}
+			if(golb_map(&amcc_ctx, IO_BASE + amcc_base_off, AMCC_SZ, VM_PROT_READ) == KERN_SUCCESS) {
+				ch_wid = (uint32_t)__builtin_ctz(dcs_num_channels);
+				printf("ch_wid: 0x%" PRIX32 "\n", ch_wid);
+				mcuchnhash0 = *(volatile uint32_t *)(amcc_ctx.virt + mcuchnhash0_off);
+				printf("mcuchnhash0: 0x%" PRIX32 "\n", mcuchnhash0);
+				ch_point = 7 + (uint32_t)__builtin_ctz(mcuchnhash0);
+				printf("ch_point: 0x%" PRIX32 "\n", ch_point);
+				if(ch_wid >= 2) {
+					mcuchnhash1 = *(volatile uint32_t *)(amcc_ctx.virt + mcuchnhash1_off);
+					printf("mcuchnhash1: 0x%" PRIX32 "\n", mcuchnhash1);
 				}
-				if(ret != KERN_SUCCESS) {
-					golb_unmap(wdt_ctx);
+				addrcfg = *(volatile uint32_t *)(amcc_ctx.virt + addrcfg_off);
+				printf("addrcfg: 0x%" PRIX32 "\n", addrcfg);
+				addrmapmode = *(volatile uint32_t *)(amcc_ctx.virt + addrmapmode_off);
+				printf("addrmapmode: 0x%" PRIX32 "\n", addrmapmode);
+				if(golb_map(&aic_glb_cfg_ctx, IO_BASE + aic_glb_cfg_base_off, sizeof(rAIC_GLB_CFG), VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
+					return KERN_SUCCESS;
 				}
+				golb_unmap(amcc_ctx);
 			}
-			if(ret != KERN_SUCCESS) {
-				golb_unmap(dcs_ctx);
-			}
+			golb_unmap(dcs_ctx);
 		}
-		if(ret != KERN_SUCCESS) {
-			golb_unmap(amp_ctx);
-		}
+		golb_unmap(amp_ctx);
 	}
-	return ret;
+	return KERN_FAILURE;
 }
-
 
 static uint32_t
 odd_parity(uint32_t in) {
@@ -271,13 +201,10 @@ dram2phys(uint32_t ch, uint32_t rank, uint32_t bank, uint32_t row, uint32_t col)
 	addr = (rank << rank_off) | (bank << bank_off) | (row << row_off) | (col << col_off);
 	mask = (1U << ch_point) - 1U;
 	addr = ((addr & ~mask) << ch_wid) | (addr & mask);
-	chnhash = (ch << (ch_point - 6U)) | (addr >> 6U);
+	chnhash = (ch << (ch_point - 7U)) | (addr >> 7U);
 	ch = odd_parity(chnhash & mcuchnhash0);
 	if(ch_wid >= 2) {
 		ch |= odd_parity(chnhash & mcuchnhash1) << 1U;
-		if(ch_wid == 3) {
-			ch |= odd_parity(chnhash & mcuchnhash2) << 2U;
-		}
 	}
 	addr |= (ch & ((1U << ch_wid) - 1U)) << ch_point;
 	return SDRAM_BASE + addr;
@@ -294,16 +221,18 @@ phys2dram(kaddr_t phys, uint32_t *ch, uint32_t *rank, uint32_t *bank, uint32_t *
 		*row = *col >> col_wid;
 		*bank = *row >> row_wid;
 		*rank = *bank >> bank_wid;
-	} else if((bank_off = 6 + extract32(addrmapmode, 8, 5)) == col_off + col_wid) {
-		*bank = addr >> bank_off;
-		*rank = *bank >> bank_wid;
-		*row = *rank >> rank_wid;
 	} else {
+		bank_off = 6 + extract32(addrmapmode, 8, 5);
 		*bank = addr >> bank_off;
-		*rank = *col >> (col_wid + bank_wid);
-		*row = *rank >> rank_wid;
-		mask = (1U << (bank_off - col_off)) - 1U;
-		*col = ((*col >> bank_wid) & ~mask) | (*col & mask);
+		if(bank_off == col_off + col_wid) {
+			*rank = *bank >> bank_wid;
+			*row = *rank >> rank_wid;
+		} else {
+			*rank = *col >> (col_wid + bank_wid);
+			*row = *rank >> rank_wid;
+			mask = (1U << (bank_off - col_off)) - 1U;
+			*col = ((*col >> bank_wid) & ~mask) | (*col & mask);
+		}
 	}
 	*rank &= (1U << rank_wid) - 1U;
 	*row &= (1U << row_wid) - 1U;
@@ -318,81 +247,62 @@ phys2dram(kaddr_t phys, uint32_t *ch, uint32_t *rank, uint32_t *bank, uint32_t *
 	return KERN_FAILURE;
 }
 
-static size_t
-get_cpunum(void) {
-	uint64_t p;
-
-	__asm__ volatile("mrs %0, TPIDRRO_EL0" : "=r" (p));
-	return p & 7U;
-}
-
 static int
 ryuzaki_test(void) {
+	uint32_t ch, rank, bank, row, col, ba[3], r[16], c[10], act_cmd, write_cmd;
 	thread_time_constraint_policy_data_t policy;
 	mach_timebase_info_data_t timebase_info;
-	uint32_t ch, rank, bank, row, col;
 	int ret = EXIT_FAILURE;
-	size_t i, cpunum;
+	kaddr_t virt, phys;
 	golb_ctx_t ctx;
+	size_t i;
 
-	if(mach_timebase_info(&timebase_info) == KERN_SUCCESS && golb_map(&ctx, SDRAM_BASE, vm_page_size, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
-		for(i = 0; i < burst_len; ++i) {
-			*(volatile uint8_t *)(ctx.virt + i) = UINT8_MAX;
-		}
-		if(phys2dram(SDRAM_BASE, &ch, &rank, &bank, &row, &col) == KERN_SUCCESS) {
-			printf("ch: 0x%" PRIX32 ", rank: 0x%" PRIX32 ", bank: 0x%" PRIX32 ", row: 0x%" PRIX32 ", col: 0x%" PRIX32 "\n", ch, rank, bank, row, col);
-			*(volatile uint32_t *)(wdt_ctx.virt + wdt_ctl_off) = 0;
-			rAIC_GLB_CFG &= ~(1U << 0U);
-			cpunum = get_cpunum();
-			for(i = 0; i < cpu_cnt; ++i) {
-				if(i != cpunum) {
-					if(has_32bit_dbgwrap) {
-						*(volatile uint32_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGHALT;
-						while((*(volatile uint32_t *)cpus[i].utt_dbgwrap_ctx.virt & DBGWRAP_DBGACK) == 0) {}
-					} else {
-						*(volatile uint64_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGHALT;
-						while((*(volatile uint64_t *)cpus[i].utt_dbgwrap_ctx.virt & DBGWRAP_DBGACK) == 0) {}
+	if(mach_timebase_info(&timebase_info) == KERN_SUCCESS && mach_vm_allocate(mach_task_self(), &virt, vm_page_size, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
+		printf("virt: " KADDR_FMT "\n", virt);
+		*(volatile uint8_t *)virt = UINT8_MAX;
+		if((phys = golb_find_phys(virt)) != 0) {
+#if 1
+			phys = dram2phys(dcs_num_channels - 1, 0, 0, 0xFFF, 0);
+#endif
+			printf("phys: " KADDR_FMT "\n", phys);
+			if(golb_map(&ctx, phys, vm_page_size, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS) {
+				for(i = 0; i < burst_len; ++i) {
+					((volatile uint8_t *)ctx.virt)[i] = UINT8_MAX;
+				}
+				if(phys2dram(phys, &ch, &rank, &bank, &row, &col) == KERN_SUCCESS) {
+					printf("ch: 0x%" PRIX32 ", rank: 0x%" PRIX32 ", bank: 0x%" PRIX32 ", row: 0x%" PRIX32 ", col: 0x%" PRIX32 "\n", ch, rank, bank, row, col);
+					for(i = 0; i < sizeof(ba) / sizeof(ba[0]); ++i) {
+						ba[i] = (bank >> i) & 1U;
 					}
-				}
-			}
-			do {
-				policy.period = 0;
-				policy.preemptible = FALSE;
-				policy.constraint = policy.computation = 50000000 * timebase_info.denom / timebase_info.numer;
-				if(thread_policy_set(mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT) == KERN_SUCCESS) {
-					__asm__ volatile("dsb ish" ::: "memory");
-					*(volatile uint32_t *)(dcs_ctx.virt + ch * DCS_SPACING + amcctrl_off) &= ~(1U << 1U);
-					*(volatile uint32_t *)(amp_ctx.virt + ch * AMP_SPACING + cawrlvlentrycmd_off) = (0x3U << 16U) /* ACT-2 */ | (0x1U << 0U) /* ACT-1 */;
-					*(volatile uint32_t *)(amp_ctx.virt + ch * AMP_SPACING + cawrlvlexitcmd_off) = (0x3U << 16U) /* ACT-2 */ | (0x1U << 0U) /* ACT-1 */;
-					*(volatile uint32_t *)(amp_ctx.virt + ch * AMP_SPACING + carunwrlvl_off) |= (1U << 3U) | (1U << 0U);
-					while((*(volatile uint32_t *)(amp_ctx.virt + ch * AMP_SPACING + carunwrlvl_off) & ((1U << 3U) | (1U << 0U))) != 0) {}
-					*(volatile uint32_t *)(amp_ctx.virt + ch * AMP_SPACING + cawrlvlentrycmd_off) = (0x12U << 16U) /* Write-2 */ | (0x24U << 0U) /* Write-1 */;
-					*(volatile uint32_t *)(amp_ctx.virt + ch * AMP_SPACING + cawrlvlexitcmd_off) = (0x12U << 16U) /* Write-2 */ | (0x24U << 0U) /* Write-1 */;
-					*(volatile uint32_t *)(amp_ctx.virt + ch * AMP_SPACING + carunwrlvl_off) |= (1U << 3U) | (1U << 0U);
-					while((*(volatile uint32_t *)(amp_ctx.virt + ch * AMP_SPACING + carunwrlvl_off) & ((1U << 3U) | (1U << 0U))) != 0) {}
-					*(volatile uint32_t *)(dcs_ctx.virt + ch * DCS_SPACING + amcctrl_off) |= 1U << 1U;
-					__asm__ volatile("dsb ish" ::: "memory");
-				}
-			} while(*(volatile uint8_t *)ctx.virt != 0);
-			for(i = 0; i < cpu_cnt; ++i) {
-				if(i != cpunum) {
-					if(has_32bit_dbgwrap) {
-						*(volatile uint32_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGRESTART;
-					} else {
-						*(volatile uint64_t *)cpus[i].utt_dbgwrap_ctx.virt = DBGWRAP_DBGRESTART;
+					for(i = 0; i < sizeof(r) / sizeof(r[0]); ++i) {
+						r[i] = (row >> i) & 1U;
 					}
+					for(i = 0; i < sizeof(c) / sizeof(c[0]); ++i) {
+						c[i] = (col >> i) & 1U;
+					}
+					act_cmd = ((0x3U | (r[6] << 2U) | (r[7] << 3U) | (r[8] << 4U) | (r[9] << 5U) | (r[0] << 6U) | (r[1] << 7U) | (r[2] << 8U) | (r[3] << 9U) | (r[4] << 10U) | (r[5] << 11U)) << 16U) /* ACT-2 */ | ((0x1U | (r[12] << 2U) | (r[13] << 3U) | (r[14] << 4U) | (r[15] << 5U) | (ba[0] << 6U) | (ba[1] << 7U) | (ba[2] << 8U) | (r[10] << 10U) | (r[11] << 11U)) << 0U) /* ACT-1 */;
+					write_cmd = ((0x12U | (c[8] << 5U) | (c[2] << 6U) | (c[3] << 7U) | (c[4] << 8U) | (c[5] << 9U) | (c[6] << 10U) | (c[7] << 11U)) << 16U) /* Write-2 */ | ((0x4U | (ba[0] << 6U) | (ba[1] << 7U) | (ba[2] << 8U) | (c[9] << 10U)) << 0U) /* Write-1 */;
+					rAIC_GLB_CFG &= ~(1U << 0U);
+					do {
+						policy.period = 0;
+						policy.preemptible = FALSE;
+						policy.constraint = policy.computation = 50000000 * timebase_info.denom / timebase_info.numer;
+						if(thread_policy_set(mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT) == KERN_SUCCESS) {
+							ryuzaki((volatile uint32_t *)(amp_ctx.virt + ch * AMP_SPACING), (volatile uint32_t *)(dcs_ctx.virt + ch * DCS_SPACING), act_cmd, write_cmd);
+						}
+						for(i = 0; i < burst_len; ++i) {
+							if(((const volatile uint8_t *)ctx.virt)[i] != 0) {
+								break;
+							}
+						}
+					} while(i != burst_len);
+					rAIC_GLB_CFG |= 1U << 0U;
+					ret = 0;
 				}
+				golb_unmap(ctx);
 			}
-			rAIC_GLB_CFG |= 1U << 0U;
-			*(volatile uint32_t *)(wdt_ctx.virt + wdt_ctl_off) = 4;
-			printf("after: ");
-			for(i = 0; i < burst_len; ++i) {
-				printf("%02" PRIX8, *(volatile uint8_t *)(ctx.virt + i));
-			}
-			putchar('\n');
-			ret = 0;
 		}
-		golb_unmap(ctx);
+		mach_vm_deallocate(mach_task_self(), virt, vm_page_size);
 	}
 	return ret;
 }
@@ -400,13 +310,9 @@ ryuzaki_test(void) {
 int
 main(void) {
 	int ret = EXIT_FAILURE;
-	size_t i;
 
 	if(init_arm_globals() == KERN_SUCCESS) {
-		printf("amp_base_off: 0x%zX, dcs_base_off: 0x%zX, wdt_base_off: 0x%zX, amcc_base_off: 0x%zX, aic_glb_cfg_base_off: 0x%zX, mcsaddrbankhash0: 0x%" PRIX32 ", mcsaddrbankhash1: 0x%" PRIX32 ", mcsaddrbankhash2: 0x%" PRIX32 ", dcs_num_channels: 0x%" PRIX32 ", burst_len: 0x%zX, addrcfg_off: 0x%zX, wdt_ctl_off: 0x%zX, amcctrl_off: 0x%zX, carunwrlvl_off: 0x%zX, mcuchnhash0_off: 0x%zX, mcuchnhash1_off: 0x%zX, mcuchnhash2_off: 0x%zX, addrmapmode_off: 0x%zX, cawrlvlexitcmd_off: 0x%zX, cawrlvlentrycmd_off: 0x%zX\n", amp_base_off, dcs_base_off, wdt_base_off, amcc_base_off, aic_glb_cfg_base_off, mcsaddrbankhash0, mcsaddrbankhash1, mcsaddrbankhash2, dcs_num_channels, burst_len, addrcfg_off, wdt_ctl_off, amcctrl_off, carunwrlvl_off, mcuchnhash0_off, mcuchnhash1_off, mcuchnhash2_off, addrmapmode_off, cawrlvlexitcmd_off, cawrlvlentrycmd_off);
-		for(i = 0; i < cpu_cnt; ++i) {
-			printf("cpus[%zu] = { .utt_dbgwrap_base_off: 0x%zX }\n", i, cpus[i].utt_dbgwrap_base_off);
-		}
+		printf("amp_base_off: 0x%zX, dcs_base_off: 0x%zX, amcc_base_off: 0x%zX, aic_glb_cfg_base_off: 0x%zX, mcsaddrbankhash0: 0x%" PRIX32 ", mcsaddrbankhash1: 0x%" PRIX32 ", mcsaddrbankhash2: 0x%" PRIX32 ", dcs_num_channels: 0x%" PRIX32 ", burst_len: 0x%zX, addrcfg_off: 0x%zX, mcuchnhash0_off: 0x%zX, mcuchnhash1_off: 0x%zX, addrmapmode_off: 0x%zX\n", amp_base_off, dcs_base_off, amcc_base_off, aic_glb_cfg_base_off, mcsaddrbankhash0, mcsaddrbankhash1, mcsaddrbankhash2, dcs_num_channels, burst_len, addrcfg_off, mcuchnhash0_off, mcuchnhash1_off, addrmapmode_off);
 		if(golb_init(0, NULL, NULL) == KERN_SUCCESS) {
 			if(ryuzaki_init() == KERN_SUCCESS) {
 				ret = ryuzaki_test();
