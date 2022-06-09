@@ -89,6 +89,7 @@
 #define IS_LDR_X(a) (((a) & 0xFF000000U) == 0x58000000U)
 #define IS_ADD_X(a) (((a) & 0xFFC00000U) == 0x91000000U)
 #define IS_MOV_X(a) (((a) & 0xFFE00000U) == 0xAA000000U)
+#define IS_SUBS_X(a) (((a) & 0xFF200000U) == 0xEB000000U)
 #define LDR_W_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 2U)
 #define LDR_X_UNSIGNED_IMM(a) (extract32(a, 10, 12) << 3U)
 #define IS_LDR_X_UXTW_3(a) (((a) & 0xFFE0FC00U) == 0xF8605800U)
@@ -96,6 +97,7 @@
 #define IS_LDR_X_UNSIGNED_IMM(a) (((a) & 0xFFC00000U) == 0xF9400000U)
 #define ADR_IMM(a) ((sextract64(a, 5, 19) << 2U) | extract32(a, 29, 2))
 #define ARM_PTE_MASK (((1ULL << ARM64_VMADDR_BITS) - 1U) & ~ARM_PGMASK)
+#define PVH_HIGH_FLAGS (PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN | PVH_FLAG_HASHED | (1ULL << 57U) | (1ULL << 56U) | (1ULL << 55U))
 
 #ifndef SECT_CSTRING
 #	define SECT_CSTRING "__cstring"
@@ -160,12 +162,14 @@ static boot_args_t boot_args;
 static void *krw_0, *kernrw_0;
 static kread_func_t kread_buf;
 static task_t tfp0 = TASK_NULL;
+static uint64_t proc_struct_sz;
 static kwrite_func_t kwrite_buf;
 static krw_0_kread_func_t krw_0_kread;
 static unsigned t1sz_boot, arm_pgshift;
 static krw_0_kwrite_func_t krw_0_kwrite;
+static bool has_proc_struct_sz, has_vm_obj_packed_ptr;
 static size_t task_map_off, proc_task_off, proc_p_pid_off, vm_map_pmap_off, pmap_sw_asid_off, vm_map_flags_off;
-static kaddr_t kslide, pvh_high_flags, kernproc, pv_head_table_ptr, const_boot_args, lowglo_ptr, pv_head_table, our_map, our_pmap;
+static kaddr_t kslide, kernproc, pv_head_table_ptr, const_boot_args, lowglo_ptr, pv_head_table, proc_struct_sz_ptr, our_map, our_pmap;
 
 static uint32_t
 extract32(uint32_t val, unsigned start, unsigned len) {
@@ -753,6 +757,22 @@ pfinder_lowglo_ptr(pfinder_t pfinder) {
 }
 
 static kaddr_t
+pfinder_proc_struct_sz_ptr(pfinder_t pfinder) {
+	kaddr_t ref = pfinder_sym(pfinder, "_proc_struct_size");
+	uint32_t insns[3];
+
+	if(ref != 0) {
+		return ref;
+	}
+	for(ref = pfinder_xref_str(pfinder, "panic: ticket lock acquired check done outside of kernel debugger @%s:%d", 0); sec_read_buf(pfinder.sec_text, ref, insns, sizeof(insns)) == KERN_SUCCESS; ref -= sizeof(*insns)) {
+		if(IS_ADRP(insns[0]) && IS_LDR_X_UNSIGNED_IMM(insns[1]) && IS_SUBS_X(insns[2]) && RD(insns[2]) == 1) {
+			return pfinder_xref_rd(pfinder, RD(insns[1]), ref, 0);
+		}
+	}
+	return 0;
+}
+
+static kaddr_t
 pfinder_init_kbase(pfinder_t *pfinder) {
 	struct {
 		uint32_t pri_prot, pri_max_prot, pri_inheritance, pri_flags;
@@ -884,7 +904,6 @@ pfinder_init_offsets(void) {
 	if(uname(&uts) == 0 && (p = strstr(uts.version, "root:xnu-")) != NULL && (e = strchr(p += strlen("root:xnu-"), '~')) != NULL) {
 		*e = '\0';
 		if((cf_str = CFStringCreateWithCStringNoCopy(kCFAllocatorDefault, p, kCFStringEncodingASCII, kCFAllocatorNull)) != NULL) {
-			pvh_high_flags = 0;
 			task_map_off = 0x20;
 			proc_task_off = 0x18;
 			proc_p_pid_off = 0x10;
@@ -896,7 +915,6 @@ pfinder_init_offsets(void) {
 				proc_p_pid_off = 0x60;
 				pmap_sw_asid_off = 0xDC;
 				vm_map_flags_off = 0x10C;
-				pvh_high_flags = PVH_FLAG_CPU | PVH_FLAG_LOCK | PVH_FLAG_EXEC | PVH_FLAG_LOCKDOWN;
 				if(CFStringCompare(cf_str, CFSTR("6041.0.0.110.11"), kCFCompareNumerically) != kCFCompareLessThan) {
 					task_map_off = 0x28;
 					pmap_sw_asid_off = 0xEE;
@@ -906,7 +924,6 @@ pfinder_init_offsets(void) {
 							pmap_sw_asid_off = 0xE6;
 							if(CFStringCompare(cf_str, CFSTR("7090.0.0.110.4"), kCFCompareNumerically) != kCFCompareLessThan) {
 								pmap_sw_asid_off = 0xDE;
-								pvh_high_flags |= PVH_FLAG_HASHED;
 								if(CFStringCompare(cf_str, CFSTR("7195.100.326.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
 									task_map_off = 0x20;
 									if(CFStringCompare(cf_str, CFSTR("7938.0.0.111.2"), kCFCompareNumerically) != kCFCompareLessThan) {
@@ -917,6 +934,12 @@ pfinder_init_offsets(void) {
 											if(CFStringCompare(cf_str, CFSTR("8020.100.406.0.1"), kCFCompareNumerically) != kCFCompareLessThan) {
 												vm_map_pmap_off = 0x40;
 												vm_map_flags_off = 0x94;
+												if(CFStringCompare(cf_str, CFSTR("8792.0.50.111.3"), kCFCompareNumerically) != kCFCompareLessThan) {
+													proc_p_pid_off = 0x60;
+													pmap_sw_asid_off = 0x8E;
+													vm_map_flags_off = 0xB4;
+													has_vm_obj_packed_ptr = has_proc_struct_sz = true;
+												}
 											}
 										}
 									}
@@ -938,7 +961,12 @@ pfinder_init_offsets(void) {
 								printf("const_boot_args: " KADDR_FMT "\n", const_boot_args);
 								if((lowglo_ptr = pfinder_lowglo_ptr(pfinder)) != 0) {
 									printf("lowglo_ptr: " KADDR_FMT "\n", lowglo_ptr);
-									ret = KERN_SUCCESS;
+									if(!has_proc_struct_sz) {
+										ret = KERN_SUCCESS;
+									} else if((proc_struct_sz_ptr = pfinder_proc_struct_sz_ptr(pfinder)) != 0) {
+										printf("proc_struct_sz_ptr: " KADDR_FMT "\n", proc_struct_sz_ptr);
+										ret = KERN_SUCCESS;
+									}
 								}
 							}
 						}
@@ -960,6 +988,10 @@ find_task(pid_t pid, kaddr_t *task) {
 	if(kread_addr(kernproc + PROC_P_LIST_LH_FIRST_OFF, &proc) == KERN_SUCCESS) {
 		while(proc != 0 && kread_buf(proc + proc_p_pid_off, &cur_pid, sizeof(cur_pid)) == KERN_SUCCESS) {
 			if(cur_pid == pid) {
+				if(has_proc_struct_sz) {
+					*task = proc + proc_struct_sz;
+					return KERN_SUCCESS;
+				}
 				return kread_addr(proc + proc_task_off, task);
 			}
 			if(pid == 0 || kread_addr(proc + PROC_P_LIST_LE_PREV_OFF, &proc) != KERN_SUCCESS) {
@@ -992,6 +1024,11 @@ vm_map_lookup_entry(kaddr_t vm_map, kaddr_t virt, vm_map_entry_t *vm_entry) {
 		}
 	}
 	return KERN_FAILURE;
+}
+
+static kaddr_t
+vm_obj_unpack_ptr(kaddr_t p) {
+	return has_vm_obj_packed_ptr ? lowglo.pmap_mem_packed_base_addr + (uint64_t)((int64_t)(p >> (32U - lowglo.pmap_mem_packed_shift))) : p;
 }
 
 static kaddr_t
@@ -1068,7 +1105,7 @@ golb_init(kaddr_t _kslide, kread_func_t _kread_buf, kwrite_func_t _kwrite_buf) {
 		if(kread_buf != NULL && kwrite_buf != NULL && setpriority(PRIO_PROCESS, 0, PRIO_MIN) != -1) {
 			if(init_arm_pgshift() == KERN_SUCCESS) {
 				printf("arm_pgshift: %u\n", arm_pgshift);
-				if(pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS) {
+				if(pfinder_init_offsets() == KERN_SUCCESS && kread_buf(lowglo_ptr, &lowglo, sizeof(lowglo)) == KERN_SUCCESS && kread_addr(pv_head_table_ptr, &pv_head_table) == KERN_SUCCESS && (!has_proc_struct_sz || kread_buf(proc_struct_sz_ptr, &proc_struct_sz, sizeof(proc_struct_sz)) == KERN_SUCCESS)) {
 					printf("pv_head_table: " KADDR_FMT "\n", pv_head_table);
 					if(kread_buf(const_boot_args, &boot_args, sizeof(boot_args)) == KERN_SUCCESS) {
 						printf("virt_base: " KADDR_FMT ", phys_base: " KADDR_FMT ", mem_sz: 0x%" PRIX64 "\n", boot_args.virt_base, boot_args.phys_base, boot_args.mem_sz);
@@ -1123,7 +1160,7 @@ golb_find_phys(kaddr_t virt) {
 	vm_page_t m;
 
 	virt -= virt_off;
-	if(vm_map_lookup_entry(our_map, virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) == KERN_SUCCESS) {
+	if(vm_map_lookup_entry(our_map, virt, &vm_entry) == KERN_SUCCESS && (vm_entry.vme_object = vm_obj_unpack_ptr(vm_entry.vme_object)) != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) == KERN_SUCCESS) {
 		while((vm_page = vm_page_unpack_ptr(m.vmp_listq.next)) != 0) {
 			printf("vm_page: " KADDR_FMT "\n", vm_page);
 			if(vm_page == vm_entry.vme_object || kread_buf(vm_page, &m, sizeof(m)) != KERN_SUCCESS) {
@@ -1169,7 +1206,7 @@ golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
 					*(volatile kaddr_t *)(ctx->virt + map_off) = FAULT_MAGIC;
 				}
 				flags &= ~VM_MAP_FLAGS_NO_ZERO_FILL;
-				if(kwrite_buf(our_map + vm_map_flags_off, &flags, sizeof(flags)) == KERN_SUCCESS && vm_map_lookup_entry(our_map, ctx->virt, &vm_entry) == KERN_SUCCESS && vm_entry.vme_object != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && vm_entry.links.end - ctx->virt >= sz && kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) == KERN_SUCCESS && (ctx->pages = calloc(sz >> arm_pgshift, sizeof(ctx->pages[0]))) != NULL) {
+				if(kwrite_buf(our_map + vm_map_flags_off, &flags, sizeof(flags)) == KERN_SUCCESS && vm_map_lookup_entry(our_map, ctx->virt, &vm_entry) == KERN_SUCCESS && (vm_entry.vme_object = vm_obj_unpack_ptr(vm_entry.vme_object)) != 0 && trunc_page_kernel(vm_entry.vme_offset) == 0 && vm_entry.links.end - ctx->virt >= sz && kread_buf(vm_entry.vme_object, &m.vmp_listq.next, sizeof(m.vmp_listq.next)) == KERN_SUCCESS && (ctx->pages = calloc(sz >> arm_pgshift, sizeof(ctx->pages[0]))) != NULL) {
 					ctx->page_cnt = 0;
 					for(map_off = 0; map_off < sz; map_off += ARM_PGBYTES) {
 						if((map_off & vm_kernel_page_mask) == 0) {
@@ -1192,7 +1229,7 @@ golb_map(golb_ctx_t *ctx, kaddr_t phys, mach_vm_size_t sz, vm_prot_t prot) {
 							if((pv_h & PVH_TYPE_MASK) != PVH_TYPE_PTEP) {
 								break;
 							}
-							ptep = (pv_h & PVH_LIST_MASK) | pvh_high_flags;
+							ptep = (pv_h & PVH_LIST_MASK) | PVH_HIGH_FLAGS;
 						} else {
 							vphys += ARM_PGBYTES;
 							ptep += sizeof(pte);
