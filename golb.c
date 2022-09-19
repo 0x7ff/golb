@@ -700,7 +700,7 @@ pfinder_init_kernel(pfinder_t *pfinder, size_t off) {
 				if(fec.fileoff == 0 || fec.entry_id.offset > fec.cmdsize) {
 					break;
 				}
-				if(kstrcmp(p + fec.entry_id.offset, "com.apple.kernel") == 0 && pfinder_init_macho(pfinder, fec.fileoff) == KERN_SUCCESS) {
+				if(kstrcmp(p + fec.entry_id.offset, "com.apple.kernel") == 0 && pfinder_init_kernel(pfinder, fec.fileoff) == KERN_SUCCESS) {
 					return KERN_SUCCESS;
 				}
 			}

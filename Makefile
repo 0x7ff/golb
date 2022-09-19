@@ -1,6 +1,6 @@
-.PHONY: all aes_ap aes_ap_ppl coresight coresight_ppl recfg recfg_ppl ryuzaki ryuzaki_ppl clean
+.PHONY: all aes_ap aes_ap_ppl coresight coresight_ppl recfg recfg_ppl clean
 
-all: aes_ap aes_ap_ppl coresight coresight_ppl recfg recfg_ppl ryuzaki ryuzaki_ppl
+all: aes_ap aes_ap_ppl coresight coresight_ppl recfg recfg_ppl
 
 aes_ap:
 	xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=10.0 -Weverything golb.c aes_ap.c -o aes_ap -framework IOKit -framework CoreFoundation -lcompression -Os
@@ -20,11 +20,5 @@ recfg:
 recfg_ppl:
 	xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=10.0 -Weverything golb_ppl.c recfg.c -o recfg_ppl -framework IOKit -framework CoreFoundation -lcompression -Os
 
-ryuzaki:
-	xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=10.0 -Weverything golb.c ryuzaki.S ryuzaki.c -o ryuzaki -framework IOKit -framework CoreFoundation -lcompression -Os
-
-ryuzaki_ppl:
-	xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=10.0 -Weverything golb_ppl.c ryuzaki.S ryuzaki.c -o ryuzaki_ppl -framework IOKit -framework CoreFoundation -lcompression -Os
-
 clean:
-	$(RM) aes_ap aes_ap_ppl coresight coresight_ppl recfg recfg_ppl ryuzaki ryuzaki_ppl
+	$(RM) aes_ap aes_ap_ppl coresight coresight_ppl recfg recfg_ppl

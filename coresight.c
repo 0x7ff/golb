@@ -110,22 +110,6 @@ init_arm_globals(void) {
 				cpus[cpu_cnt].ed_base_off = 0x8510000;
 				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x8540000;
 				return KERN_SUCCESS;
-			case 0x07D34B9FU: /* CPUFAMILY_ARM_VORTEX_TEMPEST */
-			case 0x462504D2U: /* CPUFAMILY_ARM_LIGHTNING_THUNDER */
-			case 0x1B588BB3U: /* CPUFAMILY_ARM_FIRESTORM_ICESTORM */
-				cpus[cpu_cnt].ed_base_off = 0x10010000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x10040000;
-				cpus[cpu_cnt].ed_base_off = 0x10110000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x10140000;
-				cpus[cpu_cnt].ed_base_off = 0x10210000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x10240000;
-				cpus[cpu_cnt].ed_base_off = 0x10310000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x10340000;
-				cpus[cpu_cnt].ed_base_off = 0x11010000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x11040000;
-				cpus[cpu_cnt].ed_base_off = 0x11110000;
-				cpus[cpu_cnt++].utt_dbgwrap_base_off = 0x11140000;
-				return KERN_SUCCESS;
 			default:
 				break;
 		}

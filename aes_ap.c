@@ -204,6 +204,18 @@ init_arm_globals(void) {
 				pmgr_aes0_ps_off = 0x3B700238;
 				pmgr_security_off = 0x3D2D0000;
 				return KERN_SUCCESS;
+			case 0xDA33D83DU: /* CPUFAMILY_ARM_AVALANCHE_BLIZZARD */
+				aes_ap_v2 = true;
+				aes_ap_base_off = 0x3500C000;
+				pmgr_aes0_ps_off = 0x3B700218;
+				pmgr_security_off = 0x3D2DC000;
+				return KERN_SUCCESS;
+			case 0x8765EDEAU: /* CPUFAMILY_ARM_EVEREST_SAWTOOTH */
+				aes_ap_v2 = true;
+				aes_ap_base_off = 0x3500C000;
+				pmgr_aes0_ps_off = 0x3B700238;
+				pmgr_security_off = 0x3D2DC000;
+				return KERN_SUCCESS;
 			default:
 				break;
 		}
